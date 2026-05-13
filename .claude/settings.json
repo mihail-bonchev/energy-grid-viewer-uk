@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3000/api/carbon)",
+      "Bash(curl -s http://localhost:3000/api/prices)",
+      "Bash(kill %1)"
+    ]
+  }
+}

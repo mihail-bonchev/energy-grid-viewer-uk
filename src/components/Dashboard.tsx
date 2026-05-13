@@ -8,6 +8,8 @@ import {
 } from "recharts";
 import dynamic from "next/dynamic";
 import type { ApiResponse, StorageDataPoint } from "@/lib/elexon";
+import type { PricePoint } from "@/lib/prices";
+import type { CarbonPoint } from "@/lib/carbon";
 import UnitsTab from "@/components/UnitsTab";
 
 const UKMap = dynamic(() => import("@/components/UKMap"), { ssr: false });
@@ -133,6 +135,82 @@ function buildHourlyData(points: StorageDataPoint[]) {
   });
 }
 
+// ─── Overlay chart tooltips ───────────────────────────────────────────────────
+
+function getPriceColor(price: number): string {
+  if (price <= 0) return "#60a5fa";   // negative pricing — charging bonus
+  if (price < 10) return "#00ffb3";
+  if (price < 20) return "#4ade80";
+  if (price < 35) return "#fbbf24";
+  if (price < 60) return "#f97316";
+  return "#ef4444";
+}
+
+function getCarbonColor(index: string): string {
+  switch (index) {
+    case "very low":  return "#00ffb3";
+    case "low":       return "#4ade80";
+    case "moderate":  return "#fbbf24";
+    case "high":      return "#f97316";
+    case "very high": return "#ef4444";
+    default:          return "rgba(255,255,255,0.4)";
+  }
+}
+
+function PriceTooltip({ active, payload, label }: {
+  active?: boolean;
+  payload?: Array<{ value: number }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const price = payload[0].value;
+  return (
+    <div style={{
+      background: "rgba(7,8,15,0.96)", border: "1px solid var(--border)",
+      borderRadius: 8, padding: "10px 16px",
+      fontFamily: "var(--font-mono)", fontSize: 12,
+      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    }}>
+      <div style={{ color: "var(--text-dim)", marginBottom: 8 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: getPriceColor(price) }} />
+        <span style={{ color: "var(--text-mid)" }}>Price</span>
+        <span style={{ color: getPriceColor(price), fontWeight: 700, marginLeft: "auto" }}>
+          {price.toFixed(2)} p/kWh
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function CarbonTooltip({ active, payload, label }: {
+  active?: boolean;
+  payload?: Array<{ value: number; payload: CarbonPoint }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const { value, payload: entry } = payload[0];
+  const color = getCarbonColor(entry.index);
+  return (
+    <div style={{
+      background: "rgba(7,8,15,0.96)", border: "1px solid var(--border)",
+      borderRadius: 8, padding: "10px 16px",
+      fontFamily: "var(--font-mono)", fontSize: 12,
+      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    }}>
+      <div style={{ color: "var(--text-dim)", marginBottom: 8 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+        <span style={{ color: "var(--text-mid)" }}>Carbon</span>
+        <span style={{ color, fontWeight: 700, marginLeft: "auto" }}>{value} gCO₂/kWh</span>
+      </div>
+      <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--border)", color, fontSize: 11, letterSpacing: "0.08em" }}>
+        {entry.index.toUpperCase()}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard({ initialData }: { initialData: ApiResponse }) {
@@ -141,6 +219,10 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   const [countdown, setCountdown] = useState(REFRESH_MS / 1000);
   const [selectedView, setSelectedView] = useState<"battery" | "pumped" | "total">("battery");
   const [activeTab, setActiveTab] = useState<MainTab>("overview");
+  const [priceData, setPriceData] = useState<PricePoint[]>([]);
+  const [carbonData, setCarbonData] = useState<CarbonPoint[]>([]);
+  const [showPrices, setShowPrices] = useState(false);
+  const [showCarbon, setShowCarbon] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -158,14 +240,36 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
     }
   }, []);
 
+  const fetchPrices = useCallback(async () => {
+    try {
+      const res = await fetch("/api/prices", { cache: "no-store" });
+      const json = await res.json();
+      if (json.data) setPriceData(json.data);
+    } catch (err) {
+      console.error("Prices fetch failed", err);
+    }
+  }, []);
+
+  const fetchCarbon = useCallback(async () => {
+    try {
+      const res = await fetch("/api/carbon", { cache: "no-store" });
+      const json = await res.json();
+      if (json.data) setCarbonData(json.data);
+    } catch (err) {
+      console.error("Carbon fetch failed", err);
+    }
+  }, []);
+
   useEffect(() => {
+    fetchPrices();
+    fetchCarbon();
     timerRef.current = setInterval(refresh, REFRESH_MS);
     countRef.current = setInterval(() => setCountdown((c) => Math.max(0, c - 1)), 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (countRef.current) clearInterval(countRef.current);
     };
-  }, [refresh]);
+  }, [refresh, fetchPrices, fetchCarbon]);
 
   const { data, meta } = apiData;
   const latest = data[data.length - 1];
@@ -391,17 +495,42 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
               </div>
             </div>
 
-            {/* View toggles */}
-            <div style={{ display: "flex", gap: 4, background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: 4 }}>
-              {viewKeys.map(({ key, label }) => (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {/* View toggles */}
+              <div style={{ display: "flex", gap: 4, background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: 4 }}>
+                {viewKeys.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setSelectedView(key)}
+                    style={{
+                      background: selectedView === key ? "rgba(255,255,255,0.08)" : "transparent",
+                      border: selectedView === key ? "1px solid var(--border)" : "1px solid transparent",
+                      borderRadius: 6, padding: "6px 14px",
+                      color: selectedView === key ? "var(--text)" : "var(--text-dim)",
+                      fontSize: 12, cursor: "pointer",
+                      fontFamily: "var(--font-sans)",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Overlay toggles */}
+              <div style={{ width: 1, height: 20, background: "var(--border)" }} />
+              {([
+                { key: "prices", label: "⚡ Prices", active: showPrices, toggle: () => setShowPrices((v) => !v) },
+                { key: "carbon", label: "🌱 Carbon", active: showCarbon, toggle: () => setShowCarbon((v) => !v) },
+              ] as { key: string; label: string; active: boolean; toggle: () => void }[]).map(({ key, label, active, toggle }) => (
                 <button
                   key={key}
-                  onClick={() => setSelectedView(key)}
+                  onClick={toggle}
                   style={{
-                    background: selectedView === key ? "rgba(255,255,255,0.08)" : "transparent",
-                    border: selectedView === key ? "1px solid var(--border)" : "1px solid transparent",
+                    background: active ? "rgba(255,255,255,0.08)" : "transparent",
+                    border: active ? "1px solid var(--border)" : "1px solid transparent",
                     borderRadius: 6, padding: "6px 14px",
-                    color: selectedView === key ? "var(--text)" : "var(--text-dim)",
+                    color: active ? "var(--text)" : "var(--text-dim)",
                     fontSize: 12, cursor: "pointer",
                     fontFamily: "var(--font-sans)",
                     transition: "all 0.15s",
@@ -479,6 +608,91 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
             </AreaChart>
           </ResponsiveContainer>
         </div>
+
+        {/* ── Prices overlay ───────────────────────────────────────────────── */}
+        {showPrices && (
+          <div className="animate-fade-up" style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-lg)", padding: "24px",
+            marginBottom: 20,
+          }}>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Octopus Agile Prices — Today</div>
+            <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 18 }}>
+              Half-hourly electricity unit rate · p/kWh inc. VAT · Region A (East England)
+            </div>
+            {priceData.length === 0 ? (
+              <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>Loading prices…</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={150}>
+                <BarChart data={priceData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis
+                    dataKey="time"
+                    stroke="transparent"
+                    tick={{ fill: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                    interval={5}
+                  />
+                  <YAxis
+                    tickFormatter={(v: number) => `${v}p`}
+                    stroke="transparent"
+                    tick={{ fill: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                    width={38}
+                  />
+                  <Tooltip content={<PriceTooltip />} />
+                  <ReferenceLine y={0} stroke="rgba(255,255,255,0.25)" strokeDasharray="5 5" />
+                  <Bar dataKey="price" radius={[2, 2, 0, 0]}>
+                    {priceData.map((entry, i) => (
+                      <Cell key={i} fill={getPriceColor(entry.price)} fillOpacity={0.85} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        )}
+
+        {/* ── Carbon intensity overlay ──────────────────────────────────────── */}
+        {showCarbon && (
+          <div className="animate-fade-up" style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-lg)", padding: "24px",
+            marginBottom: 20,
+          }}>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Grid Carbon Intensity — Today</div>
+            <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 18 }}>
+              gCO₂eq/kWh · National Grid ESO · Half-hourly actual &amp; forecast
+            </div>
+            {carbonData.length === 0 ? (
+              <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>Loading carbon data…</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={150}>
+                <BarChart data={carbonData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis
+                    dataKey="time"
+                    stroke="transparent"
+                    tick={{ fill: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                    interval={5}
+                  />
+                  <YAxis
+                    tickFormatter={(v: number) => `${v}`}
+                    stroke="transparent"
+                    tick={{ fill: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                    width={38}
+                  />
+                  <Tooltip content={<CarbonTooltip />} />
+                  <Bar dataKey="intensity" radius={[2, 2, 0, 0]}>
+                    {carbonData.map((entry, i) => (
+                      <Cell key={i} fill={getCarbonColor(entry.index)} fillOpacity={0.85} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        )}
 
         {/* ── Bottom row: hourly bars + info ────────────────────────────────── */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 20 }}>
