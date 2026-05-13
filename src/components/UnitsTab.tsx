@@ -380,8 +380,7 @@ export default function UnitsTab() {
       {/* ── Data note ──────────────────────────────────────────────── */}
       <div style={{ marginTop: 16, padding: "12px 16px", background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.15)", borderRadius: 8, fontSize: 12, color: "rgba(251,191,36,0.8)", lineHeight: 1.6 }}>
         <strong>Data note:</strong> Unit registry from Elexon BM Reference API. Capacities shown are registered <code>generationCapacity</code> values — verified figures for major sites.
-        Per-unit live FPN (charge/discharge) data requires the legacy BMRS API (api.bmreports.com) with an Elexon account key.
-        The new Insights API (data.elexon.co.uk) does not currently expose per-unit physical notification endpoints publicly.
+        For per-site live output, see the <strong>Live Sites</strong> tab.
       </div>
     </div>
   );

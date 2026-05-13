@@ -4,7 +4,30 @@
       "Bash(npm run *)",
       "Bash(curl -s http://localhost:3000/api/carbon)",
       "Bash(curl -s http://localhost:3000/api/prices)",
-      "Bash(kill %1)"
+      "Bash(kill %1)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(curl -s http://localhost:3000/api/sites)",
+      "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1/datasets/PN?from=2026-05-13T00:00Z&to=2026-05-13T12:00Z&format=json\")",
+      "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1/datasets/PN?settlementDateFrom=2026-05-13&settlementDateTo=2026-05-13&format=json\")",
+      "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1/datasets/PN\")",
+      "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1/datasets/BOALF?from=2026-05-13T00:00Z&to=2026-05-13T12:00Z&format=json\")",
+      "Bash(curl -s \"http://localhost:3000/api/elexon/debug\")",
+      "Bash(curl -s \"http://localhost:3000/api/elexon\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('source:', d['meta']['source']\\); print\\('count:', d['meta']['count']\\)\")",
+      "Bash(curl -s \"http://localhost:3000/api\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:3000/api/elexon\")",
+      "Bash(curl -v \"https://data.elexon.co.uk/bmrs/api/v1/datasets/PN?from=2026-05-13T00:00Z&to=2026-05-13T12:00Z&format=json\")",
+      "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1/datasets/PN?settlementDate=2026-05-13&format=json\")",
+      "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1/datasets/PHYBMDATA?from=2026-05-13T00:00Z&to=2026-05-13T12:00Z&format=json\")",
+      "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1/datasets/\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1/datasets\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('\\\\n'.join\\(d[:30]\\) if isinstance\\(d,list\\) else print\\(type\\(d\\)\\)\\)\")",
+      "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1\")",
+      "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1/datasets/BOALF?from=2026-05-13T00:00Z&to=2026-05-13T01:00Z&format=json\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\)['data'][0]; print\\(json.dumps\\(d, indent=2\\)\\)\")",
+      "Bash(curl -s \"http://localhost:3000/api/sites\")",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

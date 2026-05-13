@@ -11,12 +11,13 @@ import type { ApiResponse, StorageDataPoint } from "@/lib/elexon";
 import type { PricePoint } from "@/lib/prices";
 import type { CarbonPoint } from "@/lib/carbon";
 import UnitsTab from "@/components/UnitsTab";
+import SitesTab from "@/components/SitesTab";
 
 const UKMap = dynamic(() => import("@/components/UKMap"), { ssr: false });
 import { fmtMW, fmtTime, getStatus } from "@/lib/elexon";
 
 const REFRESH_MS = 300_000; // 5 minutes
-type MainTab = "overview" | "units" | "map";
+type MainTab = "overview" | "units" | "map" | "sites";
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -367,6 +368,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
         <div style={{ display: "flex", gap: 4, marginBottom: 24, background: "rgba(0,0,0,0.25)", borderRadius: 10, padding: 4, width: "fit-content" }}>
           {([
             { key: "overview", label: "⚡ Live Overview" },
+            { key: "sites",    label: "📊 Live Sites" },
             { key: "units",    label: "🏭 Fleet Directory" },
             { key: "map",      label: "🗺 Site Map" },
           ] as { key: MainTab; label: string }[]).map(({ key, label }) => (
@@ -387,6 +389,9 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
             </button>
           ))}
         </div>
+
+        {/* ── Sites tab ────────────────────────────────────────────────────── */}
+        {activeTab === "sites" && <SitesTab />}
 
         {/* ── Units tab ────────────────────────────────────────────────────── */}
         {activeTab === "units" && <UnitsTab />}
