@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
-  AreaChart, Area, Line, BarChart, Bar, Cell,
+  ComposedChart, AreaChart, Area, Line, BarChart, Bar, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, ResponsiveContainer,
 } from "recharts";
@@ -233,7 +233,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const res = await fetch("/api/elexon", { cache: "no-store" });
+      const res = await fetch("/api", { cache: "no-store" });
       const json: ApiResponse = await res.json();
       setApiData(json);
     } catch (err) {
@@ -588,14 +588,14 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
             ))}
             {showYesterday && (
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 16, height: 2, background: "rgba(255,255,255,0.4)", borderRadius: 2, display: "inline-block", borderTop: "2px dashed rgba(255,255,255,0.4)" }} />
+                <span style={{ width: 16, height: 2, background: "#a78bfa", borderRadius: 2, display: "inline-block", borderTop: "2px dashed #a78bfa" }} />
                 <span style={{ color: "var(--text-dim)" }}>Yesterday</span>
               </span>
             )}
           </div>
 
           <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={mergedData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <ComposedChart data={mergedData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <defs>
                 {/* Dynamic zero-line split: discharge (green) above zero, charge (blue) below */}
                 <linearGradient id="gradDischarge" x1="0" y1="0" x2="0" y2="1">
@@ -648,21 +648,21 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                 activeDot={false}
                 legendType="none"
               />
-              {/* Yesterday overlay — dashed reference line */}
+              {/* Yesterday overlay — dashed lavender reference line */}
               {showYesterday && yesterdayData.length > 0 && (
                 <Line
                   type="monotone"
                   dataKey="yesterday"
                   name="Yesterday"
-                  stroke="rgba(255,255,255,0.35)"
-                  strokeWidth={1.5}
-                  strokeDasharray="5 4"
+                  stroke="#a78bfa"
+                  strokeWidth={2}
+                  strokeDasharray="6 3"
                   dot={false}
-                  activeDot={{ r: 4, fill: "rgba(255,255,255,0.5)", stroke: "none" }}
+                  activeDot={{ r: 4, fill: "#a78bfa", stroke: "rgba(0,0,0,0.5)", strokeWidth: 1 }}
                   connectNulls={false}
                 />
               )}
-            </AreaChart>
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
 
