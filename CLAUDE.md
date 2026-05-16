@@ -9,9 +9,33 @@ npm run dev      # Dev server at http://localhost:3000
 npm run build    # Production build
 npm start        # Run production server
 npm run lint     # ESLint check (no --fix flag configured)
+
+# Tests
+npm test                  # Unit + behaviour tests (Jest, ~5s)
+npm run test:unit         # Pure function tests only
+npm run test:behaviour    # Fetch-mocked lib tests only
+npm run test:coverage     # Jest with coverage report
+npm run test:e2e          # Playwright E2E against https://grid.xelantis.com
+npm run test:e2e:ui       # Playwright interactive UI mode
+npm run test:e2e:prod     # Explicitly target production URL
+BASE_URL=http://localhost:3000 npm run test:e2e  # E2E against local dev server
 ```
 
-No test framework is configured — linting is the only automated check.
+## Testing
+
+Three layers:
+
+| Layer | Tool | Location | What it covers |
+|---|---|---|---|
+| Unit | Jest + ts-jest | `tests/unit/` | Pure functions: `fmtMW`, `fmtTime`, `getStatus`, `generateMockData` |
+| Behaviour | Jest + ts-jest | `tests/behaviour/` | Lib functions with `global.fetch` mocked: carbon, prices, sites, storage data fetching |
+| E2E | Playwright | `tests/e2e/` | Full browser flows: page load, overlay toggles, tab navigation |
+
+**Behaviour test note — mock call order matters.** In `fetchSitesLive`, `Promise.all([fetch(BOALF), fetchBmuMeta()])` means BOALF is mock call #1 and BMU ref is call #2. In `fetchBessTimeSeries`, `Promise.all([fetchBessBmuIds(), fetch(BOALF)])` means BMU ref is call #1 and BOALF is call #2. Always match mock order to the source.
+
+**`jest.isolateModules`** is used in every behaviour test `beforeEach` to reset module-level caches (`_bessBmuCache`, `_metaCache`) between tests.
+
+**Playwright targets production by default** (`https://grid.xelantis.com`). Set `BASE_URL` to override.
 
 ## Architecture
 

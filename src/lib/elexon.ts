@@ -83,11 +83,13 @@ export function generateMockData(hours = 24): StorageDataPoint[] {
       pumped = -300 + noise() * 0.5;
     }
 
+    const bRounded = Math.round(battery);
+    const pRounded = Math.round(pumped);
     points.push({
       time: t.toISOString(),
-      battery: Math.round(battery),
-      pumped: Math.round(pumped),
-      total: Math.round(battery + pumped),
+      battery: bRounded,
+      pumped: pRounded,
+      total: bRounded + pRounded,
     });
   }
   return points;
