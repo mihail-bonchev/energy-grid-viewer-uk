@@ -290,6 +290,60 @@ async function fetchBessTimeSeries(dataset: "PN" | "BOALF", dateStr?: string): P
   });
 }
 
+// Fetch a single site's BOALF time series for a given date. Filters by BMU prefix (site ID).
+export async function fetchSiteTimeSeries(dateStr: string, siteId: string): Promise<StorageDataPoint[]> {
+  const from = `${dateStr}T00:00Z`;
+  const to   = `${dateStr}T23:59:59Z`;
+
+  const res = await fetch(`${ELEXON_BASE}/datasets/BOALF?from=${from}&to=${to}&format=json`, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) throw new Error(`BOALF ${res.status}`);
+
+  const json = await res.json();
+  const allRecords: BmLevelRecord[] = json?.data ?? [];
+
+  type NormRecord = { bmuId: string; levelFrom: number; timeFrom: string };
+  const records: NormRecord[] = allRecords
+    .map((r) => ({ bmuId: r.nationalGridBmUnit ?? r.bmUnit ?? "", levelFrom: r.levelFrom, timeFrom: r.timeFrom }))
+    .filter((r) => r.bmuId && r.bmuId.replace(/-\d+$/, "") === siteId);
+
+  if (!records.length) return [];
+
+  const byBmu = new Map<string, NormRecord[]>();
+  for (const r of records) {
+    if (!byBmu.has(r.bmuId)) byBmu.set(r.bmuId, []);
+    byBmu.get(r.bmuId)!.push(r);
+  }
+  for (const recs of byBmu.values()) {
+    recs.sort((a, b) => new Date(a.timeFrom).getTime() - new Date(b.timeFrom).getTime());
+  }
+
+  const startMs = new Date(`${dateStr}T00:00:00Z`).getTime();
+  const endMs   = new Date(`${dateStr}T23:59:59Z`).getTime();
+  const slots: number[] = [];
+  for (let t = startMs; t <= endMs; t += 5 * 60 * 1000) slots.push(t);
+
+  return slots.map((slotMs) => {
+    let battery = 0;
+    for (const recs of byBmu.values()) {
+      let mw = 0;
+      for (const r of recs) {
+        if (new Date(r.timeFrom).getTime() <= slotMs) mw = r.levelFrom;
+        else break;
+      }
+      battery += mw;
+    }
+    return {
+      time: new Date(slotMs).toISOString(),
+      battery: Math.round(battery),
+      pumped: 0,
+      total: Math.round(battery),
+    };
+  });
+}
+
 // Fetch BESS data for a specific historical date (YYYY-MM-DD). Uses BOALF only.
 export async function fetchStorageDataForDate(dateStr: string): Promise<StorageDataPoint[]> {
   try {

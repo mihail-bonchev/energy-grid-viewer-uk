@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  ComposedChart, Area, XAxis, YAxis, CartesianGrid,
+  Tooltip, ReferenceLine, ResponsiveContainer,
+} from "recharts";
 import type { SiteData } from "@/lib/sites";
+import type { StorageDataPoint } from "@/lib/elexon";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -86,6 +91,206 @@ function SummaryChip({
   );
 }
 
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-GB", {
+    hour: "2-digit", minute: "2-digit", timeZone: "Europe/London",
+  });
+}
+
+// ─── Site history modal ───────────────────────────────────────────────────────
+
+function SiteHistoryModal({ site, onClose }: { site: SiteData; onClose: () => void }) {
+  const yesterday = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().split("T")[0];
+  }, []);
+
+  const [date, setDate] = useState(yesterday);
+  const [data, setData] = useState<StorageDataPoint[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchHistory = useCallback(async (dateStr: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/elexon/history?date=${dateStr}&site=${site.id}`, { cache: "no-store" });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      setData(json.data ?? []);
+    } catch (e) {
+      setError(String(e));
+      setData([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [site.id]);
+
+  useEffect(() => { fetchHistory(yesterday); }, [fetchHistory, yesterday]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const yBound = useMemo(() => {
+    if (!data.length) return 500;
+    const max = Math.max(...data.map((p) => Math.abs(p.battery)));
+    return Math.ceil(max / 100) * 100 || 500;
+  }, [data]);
+
+  const hasData = data.some((p) => p.battery !== 0);
+
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(0,0,0,0.72)", backdropFilter: "blur(4px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24,
+      }}
+    >
+      <div style={{
+        background: "var(--bg-card)", border: "1px solid var(--border)",
+        borderRadius: "var(--radius-lg)", padding: 28,
+        maxWidth: 820, width: "100%", maxHeight: "90vh", overflowY: "auto",
+        boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+      }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 18 }}>{site.name}</div>
+            <div style={{ color: TEXT_DIM, fontSize: 12, marginTop: 4 }}>
+              {site.operator} · {site.region} · {site.unitCount} unit{site.unitCount !== 1 ? "s" : ""}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: "rgba(255,255,255,0.06)", border: `1px solid ${BORDER}`,
+              borderRadius: 6, padding: "6px 14px", color: TEXT_MID,
+              cursor: "pointer", fontSize: 13, fontFamily: "var(--font-sans)",
+            }}
+          >✕ Close</button>
+        </div>
+
+        {/* Date picker */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+          <label style={{ color: TEXT_DIM, fontSize: 12, fontFamily: "var(--font-mono)" }}>Date</label>
+          <input
+            type="date"
+            value={date}
+            max={yesterday}
+            onChange={(e) => { setDate(e.target.value); fetchHistory(e.target.value); }}
+            style={{
+              background: "rgba(255,255,255,0.06)", border: `1px solid ${BORDER}`,
+              borderRadius: 6, padding: "6px 12px", color: "white",
+              fontFamily: "var(--font-mono)", fontSize: 12, cursor: "pointer",
+            }}
+          />
+          {loading && (
+            <span style={{ color: TEXT_DIM, fontSize: 12, fontFamily: "var(--font-mono)" }}>Loading…</span>
+          )}
+        </div>
+
+        {/* Chart */}
+        {error ? (
+          <div style={{ color: "#f87171", fontSize: 12, padding: "20px 0" }}>Failed to load: {error}</div>
+        ) : !loading && !hasData ? (
+          <div style={{
+            padding: "32px 24px", textAlign: "center",
+            color: TEXT_DIM, fontFamily: "var(--font-mono)", fontSize: 13,
+            background: "rgba(255,255,255,0.03)", borderRadius: 8,
+          }}>
+            No BM dispatch data for {site.name} on {date}.<br />
+            <span style={{ fontSize: 11, marginTop: 6, display: "block" }}>
+              This site may not have been BM-dispatched on this date, or merchant charging is not captured by BOALF.
+            </span>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 16, marginBottom: 12 }}>
+              {([["Discharging", ACCENT], ["Charging", CHARGE_COL]] as [string, string][]).map(([l, c]) => (
+                <span key={l} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 16, height: 3, background: c, borderRadius: 2, display: "inline-block" }} />
+                  <span style={{ color: TEXT_DIM, fontSize: 12 }}>{l}</span>
+                </span>
+              ))}
+            </div>
+            <ResponsiveContainer width="100%" height={240}>
+              <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="histGradDischarge" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#00ffb3" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="#00ffb3" stopOpacity={0.02} />
+                  </linearGradient>
+                  <linearGradient id="histGradCharge" x1="0" y1="1" x2="0" y2="0">
+                    <stop offset="0%" stopColor="#60a5fa" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="#60a5fa" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="time"
+                  tickFormatter={fmtTime}
+                  stroke="transparent"
+                  tick={{ fill: TEXT_DIM, fontSize: 10, fontFamily: "var(--font-mono)" }}
+                  interval={Math.floor(data.length / 12)}
+                />
+                <YAxis
+                  domain={[-yBound, yBound]}
+                  tickFormatter={(v: number) => `${Math.round(v / 100) / 10}GW`}
+                  stroke="transparent"
+                  tick={{ fill: TEXT_DIM, fontSize: 10, fontFamily: "var(--font-mono)" }}
+                  width={44}
+                />
+                <Tooltip
+                  formatter={(val: number) => [`${Math.round(val)} MW`]}
+                  labelFormatter={(l) => fmtTime(String(l))}
+                  contentStyle={{
+                    background: "rgba(7,8,15,0.96)", border: `1px solid ${BORDER}`,
+                    borderRadius: 8, fontFamily: "var(--font-mono)", fontSize: 11,
+                  }}
+                  labelStyle={{ color: TEXT_DIM }}
+                  itemStyle={{ color: ACCENT }}
+                />
+                <ReferenceLine y={0} stroke="rgba(255,255,255,0.25)" strokeDasharray="5 5" />
+                <Area
+                  type="monotone"
+                  dataKey="battery"
+                  name="Output"
+                  stroke={ACCENT}
+                  strokeWidth={2}
+                  fill="url(#histGradDischarge)"
+                  dot={false}
+                  baseLine={0}
+                />
+                <Area
+                  type="monotone"
+                  dataKey={(d: StorageDataPoint) => Math.min(0, d.battery)}
+                  name="Charging"
+                  stroke={CHARGE_COL}
+                  strokeWidth={2}
+                  fill="url(#histGradCharge)"
+                  dot={false}
+                  legendType="none"
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </>
+        )}
+
+        <div style={{ marginTop: 16, fontSize: 11, color: TEXT_DIM, fontFamily: "var(--font-mono)" }}>
+          Source: Elexon Insights BOALF · BM-dispatched activity only · Merchant charging not visible
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function SitesTab() {
@@ -95,6 +300,7 @@ export default function SitesTab() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("output");
   const [showIdle, setShowIdle] = useState(false);
+  const [historySite, setHistorySite] = useState<SiteData | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -334,6 +540,29 @@ export default function SitesTab() {
                   {site.unitCount}u
                 </span>
               </div>
+
+              {/* History button */}
+              <button
+                onClick={(e) => { e.stopPropagation(); setHistorySite(site); }}
+                title="View historical chart"
+                style={{
+                  flex: "0 0 auto",
+                  background: "rgba(255,255,255,0.05)", border: `1px solid ${BORDER}`,
+                  borderRadius: 6, padding: "4px 10px",
+                  color: TEXT_DIM, fontSize: 11, cursor: "pointer",
+                  fontFamily: "var(--font-mono)", transition: "all 0.15s",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.color = "white";
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.25)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.color = TEXT_DIM;
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = BORDER;
+                }}
+              >
+                📅 History
+              </button>
             </div>
           );
         })}
@@ -356,6 +585,11 @@ export default function SitesTab() {
       }}>
         Source: Elexon Insights BOALF data · Only sites with BM dispatch acceptances today are shown · Merchant charging may not be visible · Capacities are approximate
       </div>
+
+      {/* ── Site history modal ─────────────────────────────────────────────── */}
+      {historySite && (
+        <SiteHistoryModal site={historySite} onClose={() => setHistorySite(null)} />
+      )}
     </div>
   );
 }

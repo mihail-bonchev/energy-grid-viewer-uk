@@ -144,7 +144,8 @@ These were not in the original build but have since been added:
 - **System Price (SSP/SBP)** — Elexon imbalance price per settlement period; much spikier than Agile and the real driver of BM dispatch. Free from Elexon, no key.
 - **Grid frequency overlay** — National Grid ESO publishes live 50 Hz ± deviation; shows FFR/DC service response in real time.
 - **Improve map coordinates** — most non-KNOWN_BESS sites fall back to GSP region centroid; adding exact coordinates to `src/lib/bess-sites.ts` improves accuracy.
-- **Per-site historic view** — legacy BMRS API (free key from elexon.co.uk; endpoint: `api.bmreports.com/BMRS/PHYBMDATA/v1`)
+- **Per-site historic view (enhancement)** — the current implementation uses BOALF (BM-dispatched only); a richer view could be added using the legacy BMRS PHYBMDATA endpoint (free API key from elexon.co.uk) to include PN data showing merchant charging.
+- **Per-site historic view** (`fetchSiteTimeSeries`, `/api/elexon/history?date=&site=`, `SiteHistoryModal`) — History button per site row in Live Sites tab; opens modal with date picker and per-site BOALF charge/discharge chart. No API key needed.
 
 ## Production Deployment
 
