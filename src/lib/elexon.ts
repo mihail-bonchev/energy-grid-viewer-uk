@@ -27,6 +27,8 @@ export interface StorageDataPoint {
   battery: number;  // MW — positive = discharging, negative = charging
   pumped: number;   // MW pumped hydro storage
   total: number;    // combined storage
+  wind?: number;    // MW wind generation (FUELINST WIND field)
+  solar?: number;   // MW solar generation (FUELINST SOLAR field)
 }
 
 export interface ApiResponse {
@@ -83,6 +85,15 @@ export function generateMockData(hours = 24): StorageDataPoint[] {
       pumped = -300 + noise() * 0.5;
     }
 
+    // Solar: bell curve peaking ~13:00; zero at night
+    let solar = 0;
+    if (hour >= 6 && hour < 20) {
+      solar = Math.round(8000 * Math.exp(-0.5 * Math.pow((hour - 13) / 3.5, 2)) + (Math.random() - 0.5) * 600);
+      solar = Math.max(0, solar);
+    }
+    // Wind: variable base ~8 GW with slow sinusoidal drift
+    const wind = Math.round(Math.max(500, 8000 + 3500 * Math.sin(hour * 0.4) + (Math.random() - 0.5) * 2000));
+
     const bRounded = Math.round(battery);
     const pRounded = Math.round(pumped);
     points.push({
@@ -90,6 +101,8 @@ export function generateMockData(hours = 24): StorageDataPoint[] {
       battery: bRounded,
       pumped: pRounded,
       total: bRounded + pRounded,
+      wind,
+      solar,
     });
   }
   return points;
@@ -152,11 +165,16 @@ export async function fetchElexonFuelInst(): Promise<StorageDataPoint[]> {
     // "PS" = pumped storage hydro (distinct from "NPSHYD" = non-pumped hydro)
     const pumped = fuels.get("PS") ?? 0;
 
+    const wind = fuels.get("WIND") ?? 0;
+    const solar = fuels.get("SOLAR") ?? 0;
+
     points.push({
       time,
       battery: Math.round(Number(battery)),
       pumped: Math.round(Number(pumped)),
       total: Math.round(Number(battery) + Number(pumped)),
+      wind: Math.round(Number(wind)),
+      solar: Math.round(Number(solar)),
     });
   }
 
@@ -286,11 +304,13 @@ export async function fetchStorageData(): Promise<{ data: StorageDataPoint[]; so
   let fuelInstPoints: StorageDataPoint[] | null = null;
 
   const mergeWithPumped = (bmPoints: StorageDataPoint[], fuelInst: StorageDataPoint[]) => {
-    const pumpedByMinute = new Map<string, number>();
-    for (const p of fuelInst) pumpedByMinute.set(p.time.substring(0, 16), p.pumped);
+    const byMinute = new Map<string, { pumped: number; wind: number; solar: number }>();
+    for (const p of fuelInst) {
+      byMinute.set(p.time.substring(0, 16), { pumped: p.pumped, wind: p.wind ?? 0, solar: p.solar ?? 0 });
+    }
     return bmPoints.map((p: StorageDataPoint) => {
-      const pumped = pumpedByMinute.get(p.time.substring(0, 16)) ?? 0;
-      return { time: p.time, battery: p.battery, pumped, total: p.battery + pumped };
+      const f = byMinute.get(p.time.substring(0, 16)) ?? { pumped: 0, wind: 0, solar: 0 };
+      return { time: p.time, battery: p.battery, pumped: f.pumped, total: p.battery + f.pumped, wind: f.wind, solar: f.solar };
     });
   };
 

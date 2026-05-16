@@ -37,6 +37,8 @@ Three layers:
 
 **Playwright targets production by default** (`https://grid.xelantis.com`). Set `BASE_URL` to override.
 
+**Per-issue test expectations:** For every new feature or fix — (1) unit tests for any new pure functions in `tests/unit/`; (2) behaviour tests for any new fetch-dependent lib functions in `tests/behaviour/`; (3) E2E tests in `tests/e2e/` for new UI flows (toggle buttons, tab navigation). Run `npm test` before marking an issue done.
+
 ## Architecture
 
 **What it is**: Real-time monitoring dashboard for UK grid-scale Battery Energy Storage Systems (BESS), sourcing data from the public Elexon Insights API (no API key needed).
@@ -133,12 +135,12 @@ These were not in the original build but have since been added:
 - **Carbon intensity overlay** (`/api/carbon`) — half-hourly gCO₂eq/kWh, colour-coded by index. Toggle in main chart header.
 - **Live Sites tab** (`/api/sites`, `SitesTab`) — per-site leaderboard ranked by |currentMW|, toggle active-only vs all, sortable.
 - **Yesterday overlay** (`/api/elexon/history`, Dashboard) — dashed reference line on the main chart showing the same metric from the previous day. Fetched lazily on first toggle.
+- **BM bid/offer prices overlay** (`/api/bm-prices`, `src/lib/bm-prices.ts`) — fleet-average accepted bid/offer prices per SP from Elexon BOD dataset. Offer (amber) = discharge price £/MWh; Bid (blue) = charge price. Toggle in main chart header.
+- **Settlement period P&L estimate** (`src/lib/pnl.ts`) — estimated gross revenue per SP: `avgMW × Agile_price / 200` (£k). Bar chart with running daily total. Toggle in main chart header.
+- **Wind & solar overlay** (`StorageDataPoint.wind/solar`) — FUELINST WIND and SOLAR fields threaded through the data pipeline. Teal (wind) and yellow (solar) lines in a separate panel. Toggle in main chart header.
 
 ## Possible Enhancements
 
-- **Balancing Mechanism prices** — Elexon publishes accepted bid/offer prices per BMU per settlement period. Overlay the dispatch price to explain *why* the fleet moved.
-- **Settlement period P&L estimate** — combine MW output with Agile prices to show estimated revenue per half-hour (MW × p/kWh). Rough but compelling.
-- **Wind/solar generation overlay** — add FUELINST `WIND`/`SOLAR` fields to the main chart; visually shows storage arbitrage (charge when renewables are high, discharge when low).
 - **System Price (SSP/SBP)** — Elexon imbalance price per settlement period; much spikier than Agile and the real driver of BM dispatch. Free from Elexon, no key.
 - **Grid frequency overlay** — National Grid ESO publishes live 50 Hz ± deviation; shows FFR/DC service response in real time.
 - **Improve map coordinates** — most non-KNOWN_BESS sites fall back to GSP region centroid; adding exact coordinates to `src/lib/bess-sites.ts` improves accuracy.
@@ -146,56 +148,4 @@ These were not in the original build but have since been added:
 
 ## Production Deployment
 
-All routes are dynamic (`force-dynamic`) so the app cannot be statically exported — it needs a Node.js runtime.
-
-### Option 1 — Vercel (recommended, ~free for this usage)
-
-The repo is already Vercel-ready. `/api/*` routes run as Serverless Functions.
-
-```bash
-npm i -g vercel
-vercel        # follow prompts, auto-detects Next.js
-```
-
-**Cost**: Free tier (Hobby) covers this project comfortably — 100GB bandwidth/month, 100k function invocations/day, no always-on server. Upgrade to Pro ($20/month) only if you need custom domains on multiple projects, team access, or analytics.
-
-**Gotcha**: Vercel Serverless Functions have no persistent memory between invocations, so the module-level BMU cache (`_bessBmuCache`) resets on every cold start. The cache still works within a warm instance but won't survive across deploys or cold starts. Acceptable for this use case — it just means one extra 2.7MB Elexon fetch on cold start.
-
-### Option 2 — Fly.io (persistent memory cache, ~$3–5/month)
-
-Runs the app as a persistent Node.js process, so the module-level BMU cache stays warm indefinitely.
-
-```bash
-npm i -g flyctl
-fly launch    # auto-detects Next.js, creates fly.toml
-fly deploy
-```
-
-**Cost**: Single `shared-cpu-1x` VM with 256MB RAM ~$3/month. The BMU cache fits easily (filtered Set is <100KB). Add a `fly.toml` with `[http_service] internal_port = 3000`.
-
-### Option 3 — Railway (~$5/month, simplest Git-push deploy)
-
-Connect the GitHub repo, set `npm run build` as build command and `npm start` as start command. Auto-deploys on push.
-
-**Cost**: Starter plan $5/month for a 512MB RAM container. Persistent process = warm cache. Good choice if you want zero devops friction.
-
-### Option 4 — Self-hosted VPS (cheapest at scale, most work)
-
-Any provider (Hetzner CX11 ~€4/month, DigitalOcean $6/month) running Node.js 20+. Use PM2 to keep the process alive.
-
-```bash
-npm run build && pm2 start npm --name bess -- start
-```
-
-**Cost**: €4–6/month. Module-level cache persists indefinitely. Requires you to manage SSL (use Caddy or nginx + Let's Encrypt), upgrades, and monitoring.
-
-### Summary
-
-| Option | Cost/month | Cache survives cold start? | Effort |
-|---|---|---|---|
-| Vercel Hobby | Free | No | Minimal |
-| Fly.io | ~$3 | Yes | Low |
-| Railway | ~$5 | Yes | Minimal |
-| VPS (Hetzner/DO) | ~$4–6 | Yes | Medium |
-
-For a personal/demo project, **Vercel Hobby** is the obvious starting point. If the cold-start cache miss becomes noticeable (adds ~1s on first load after inactivity), move to **Fly.io**.
+Deployed on **Railway** (~$5/month). Git-push auto-deploys; persistent Node.js process keeps the module-level BMU cache warm. All routes are `force-dynamic` — the app requires a Node.js runtime (cannot be statically exported).

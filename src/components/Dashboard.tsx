@@ -281,6 +281,31 @@ function BmPricesTooltip({ active, payload, label }: {
   );
 }
 
+function RenewablesTooltip({ active, payload, label }: {
+  active?: boolean;
+  payload?: Array<{ value: number; name: string; color: string }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{
+      background: "rgba(7,8,15,0.96)", border: "1px solid var(--border)",
+      borderRadius: 8, padding: "10px 16px",
+      fontFamily: "var(--font-mono)", fontSize: 12,
+      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    }}>
+      <div style={{ color: "var(--text-dim)", marginBottom: 8 }}>{label ? fmtTime(label) : ""}</div>
+      {payload.map((p) => (
+        <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: p.color }} />
+          <span style={{ color: "var(--text-mid)" }}>{p.name}</span>
+          <span style={{ color: p.color, fontWeight: 700, marginLeft: "auto" }}>{fmtMW(p.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard({ initialData }: { initialData: ApiResponse }) {
@@ -298,6 +323,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   const [showYesterday, setShowYesterday] = useState(false);
   const [showBmPrices, setShowBmPrices] = useState(false);
   const [showPnl, setShowPnl] = useState(false);
+  const [showRenewables, setShowRenewables] = useState(false);
   const yesterdayFetchedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -650,11 +676,12 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
               {/* Overlay toggles */}
               <div style={{ width: 1, height: 20, background: "var(--border)" }} />
               {([
-                { key: "prices",    label: "⚡ Prices",    active: showPrices,    toggle: () => setShowPrices((v) => !v) },
-                { key: "carbon",    label: "🌱 Carbon",    active: showCarbon,    toggle: () => setShowCarbon((v) => !v) },
-                { key: "yesterday", label: "📅 Yesterday", active: showYesterday, toggle: () => { setShowYesterday((v) => !v); fetchYesterday(); } },
-                { key: "bmprices",  label: "💷 BM Price",  active: showBmPrices,  toggle: () => setShowBmPrices((v) => !v) },
-                { key: "pnl",       label: "💰 P&L",       active: showPnl,       toggle: () => setShowPnl((v) => !v) },
+                { key: "prices",     label: "⚡ Prices",       active: showPrices,     toggle: () => setShowPrices((v) => !v) },
+                { key: "carbon",     label: "🌱 Carbon",       active: showCarbon,     toggle: () => setShowCarbon((v) => !v) },
+                { key: "yesterday",  label: "📅 Yesterday",    active: showYesterday,  toggle: () => { setShowYesterday((v) => !v); fetchYesterday(); } },
+                { key: "bmprices",   label: "💷 BM Price",     active: showBmPrices,   toggle: () => setShowBmPrices((v) => !v) },
+                { key: "pnl",        label: "💰 P&L",          active: showPnl,        toggle: () => setShowPnl((v) => !v) },
+                { key: "renewables", label: "🌬️ Renewables",  active: showRenewables, toggle: () => setShowRenewables((v) => !v) },
               ] as { key: string; label: string; active: boolean; toggle: () => void }[]).map(({ key, label, active, toggle }) => (
                 <button
                   key={key}
@@ -993,6 +1020,52 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
             </div>
           );
         })()}
+
+        {/* ── Wind & solar overlay ─────────────────────────────────────────── */}
+        {showRenewables && (
+          <div className="animate-fade-up" style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-lg)", padding: "24px",
+            marginBottom: 20,
+          }}>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Wind &amp; Solar Generation — Today</div>
+            <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 12 }}>
+              Fleet-level generation estimate · MW · FUELINST (onshore + offshore wind, embedded solar)
+            </div>
+            <div style={{ display: "flex", gap: 16, marginBottom: 18 }}>
+              {[["Wind", "#2dd4bf"], ["Solar", "#fbbf24"]].map(([label, color]) => (
+                <span key={label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 16, height: 3, background: color, borderRadius: 2, display: "inline-block" }} />
+                  <span style={{ color: "var(--text-dim)", fontSize: 12 }}>{label}</span>
+                </span>
+              ))}
+            </div>
+            <ResponsiveContainer width="100%" height={180}>
+              <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="time"
+                  tickFormatter={fmtTime}
+                  stroke="transparent"
+                  tick={{ fill: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                  interval={Math.floor(data.length / 12)}
+                />
+                <YAxis
+                  tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}GW`}
+                  stroke="transparent"
+                  tick={{ fill: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                  width={36}
+                />
+                <Tooltip content={<RenewablesTooltip />} />
+                <Line type="monotone" dataKey="wind" name="Wind" stroke="#2dd4bf" strokeWidth={2} dot={false}
+                  activeDot={{ r: 4, fill: "#2dd4bf", stroke: "rgba(0,0,0,0.5)", strokeWidth: 1 }} />
+                <Line type="monotone" dataKey="solar" name="Solar" stroke="#fbbf24" strokeWidth={2} dot={false}
+                  activeDot={{ r: 4, fill: "#fbbf24", stroke: "rgba(0,0,0,0.5)", strokeWidth: 1 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        )}
 
         {/* ── Bottom row: hourly bars + info ────────────────────────────────── */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 20 }}>
