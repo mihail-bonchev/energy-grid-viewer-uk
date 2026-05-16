@@ -178,7 +178,7 @@ let _bessBmuCache: Set<string> | null = null;
 let _bessBmuCacheAt = 0;
 const BMU_CACHE_TTL = 3_600_000; // 1 hour
 
-async function fetchBessBmuIds(): Promise<Set<string>> {
+export async function fetchBessBmuIds(): Promise<Set<string>> {
   if (_bessBmuCache && Date.now() - _bessBmuCacheAt < BMU_CACHE_TTL) {
     return _bessBmuCache;
   }

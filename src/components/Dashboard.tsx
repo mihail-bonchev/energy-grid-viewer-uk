@@ -10,6 +10,7 @@ import dynamic from "next/dynamic";
 import type { ApiResponse, StorageDataPoint } from "@/lib/elexon";
 import type { PricePoint } from "@/lib/prices";
 import type { CarbonPoint } from "@/lib/carbon";
+import type { BmPricePoint } from "@/lib/bm-prices";
 import UnitsTab from "@/components/UnitsTab";
 import SitesTab from "@/components/SitesTab";
 
@@ -212,6 +213,37 @@ function CarbonTooltip({ active, payload, label }: {
   );
 }
 
+function BmPricesTooltip({ active, payload, label }: {
+  active?: boolean;
+  payload?: Array<{ value: number; name: string; color: string; payload: BmPricePoint }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const unitCount = payload[0]?.payload?.unitCount ?? 0;
+  return (
+    <div style={{
+      background: "rgba(7,8,15,0.96)", border: "1px solid var(--border)",
+      borderRadius: 8, padding: "10px 16px",
+      fontFamily: "var(--font-mono)", fontSize: 12,
+      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    }}>
+      <div style={{ color: "var(--text-dim)", marginBottom: 8 }}>{label}</div>
+      {payload.map((p) => (
+        <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: p.color }} />
+          <span style={{ color: "var(--text-mid)" }}>{p.name}</span>
+          <span style={{ color: p.color, fontWeight: 700, marginLeft: "auto" }}>
+            £{p.value.toLocaleString()}/MWh
+          </span>
+        </div>
+      ))}
+      <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--border)", color: "var(--text-dim)", fontSize: 10 }}>
+        {unitCount} BESS units
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard({ initialData }: { initialData: ApiResponse }) {
@@ -223,9 +255,11 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   const [priceData, setPriceData] = useState<PricePoint[]>([]);
   const [carbonData, setCarbonData] = useState<CarbonPoint[]>([]);
   const [yesterdayData, setYesterdayData] = useState<StorageDataPoint[]>([]);
+  const [bmPricesData, setBmPricesData] = useState<BmPricePoint[]>([]);
   const [showPrices, setShowPrices] = useState(false);
   const [showCarbon, setShowCarbon] = useState(false);
   const [showYesterday, setShowYesterday] = useState(false);
+  const [showBmPrices, setShowBmPrices] = useState(false);
   const yesterdayFetchedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -264,6 +298,16 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
     }
   }, []);
 
+  const fetchBmPrices = useCallback(async () => {
+    try {
+      const res = await fetch("/api/bm-prices", { cache: "no-store" });
+      const json = await res.json();
+      if (json.data) setBmPricesData(json.data);
+    } catch (err) {
+      console.error("BM prices fetch failed", err);
+    }
+  }, []);
+
   const fetchYesterday = useCallback(async () => {
     if (yesterdayFetchedRef.current) return;
     yesterdayFetchedRef.current = true;
@@ -282,13 +326,14 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   useEffect(() => {
     fetchPrices();
     fetchCarbon();
+    fetchBmPrices();
     timerRef.current = setInterval(refresh, REFRESH_MS);
     countRef.current = setInterval(() => setCountdown((c) => Math.max(0, c - 1)), 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (countRef.current) clearInterval(countRef.current);
     };
-  }, [refresh, fetchPrices, fetchCarbon]);
+  }, [refresh, fetchPrices, fetchCarbon, fetchBmPrices]);
 
   const { data, meta } = apiData;
   const latest = data[data.length - 1];
@@ -556,9 +601,10 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
               {/* Overlay toggles */}
               <div style={{ width: 1, height: 20, background: "var(--border)" }} />
               {([
-                { key: "prices", label: "⚡ Prices", active: showPrices, toggle: () => setShowPrices((v) => !v) },
-                { key: "carbon", label: "🌱 Carbon", active: showCarbon, toggle: () => setShowCarbon((v) => !v) },
+                { key: "prices",    label: "⚡ Prices",    active: showPrices,    toggle: () => setShowPrices((v) => !v) },
+                { key: "carbon",    label: "🌱 Carbon",    active: showCarbon,    toggle: () => setShowCarbon((v) => !v) },
                 { key: "yesterday", label: "📅 Yesterday", active: showYesterday, toggle: () => { setShowYesterday((v) => !v); fetchYesterday(); } },
+                { key: "bmprices",  label: "💷 BM Price",  active: showBmPrices,  toggle: () => setShowBmPrices((v) => !v) },
               ] as { key: string; label: string; active: boolean; toggle: () => void }[]).map(({ key, label, active, toggle }) => (
                 <button
                   key={key}
@@ -748,6 +794,73 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                 </BarChart>
               </ResponsiveContainer>
             )}
+          </div>
+        )}
+
+        {/* ── BM bid/offer prices overlay ──────────────────────────────────── */}
+        {showBmPrices && (
+          <div className="animate-fade-up" style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-lg)", padding: "24px",
+            marginBottom: 20,
+          }}>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>BM Bid/Offer Prices — Today</div>
+            <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 6 }}>
+              Fleet-average submitted prices per half-hour · £/MWh · Elexon BOD dataset · No API key
+            </div>
+            <div style={{ display: "flex", gap: 20, fontSize: 12, marginBottom: 16 }}>
+              {[["#f59e0b", "Offer (discharge)"], ["#60a5fa", "Bid (charge)"]].map(([c, l]) => (
+                <span key={l} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 16, height: 3, background: c, borderRadius: 2, display: "inline-block" }} />
+                  <span style={{ color: "var(--text-dim)" }}>{l}</span>
+                </span>
+              ))}
+            </div>
+            {bmPricesData.length === 0 ? (
+              <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>Loading BM prices…</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={180}>
+                <ComposedChart data={bmPricesData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis
+                    dataKey="time"
+                    stroke="transparent"
+                    tick={{ fill: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                    interval={5}
+                  />
+                  <YAxis
+                    tickFormatter={(v: number) => `£${v}`}
+                    stroke="transparent"
+                    tick={{ fill: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                    width={48}
+                  />
+                  <Tooltip content={<BmPricesTooltip />} />
+                  <ReferenceLine y={0} stroke="rgba(255,255,255,0.25)" strokeDasharray="5 5" />
+                  <Line
+                    type="stepAfter"
+                    dataKey="avgOffer"
+                    name="Offer"
+                    stroke="#f59e0b"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4, fill: "#f59e0b", stroke: "rgba(0,0,0,0.5)", strokeWidth: 1 }}
+                  />
+                  <Line
+                    type="stepAfter"
+                    dataKey="avgBid"
+                    name="Bid"
+                    stroke="#60a5fa"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4, fill: "#60a5fa", stroke: "rgba(0,0,0,0.5)", strokeWidth: 1 }}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
+            <div style={{ color: "var(--text-dim)", fontSize: 10, marginTop: 8 }}>
+              Offer = price fleet accepts to discharge (sentinels ≥£9,000 excluded) · Bid = price fleet accepts to charge (can be negative — unit pays to charge)
+            </div>
           </div>
         )}
 
