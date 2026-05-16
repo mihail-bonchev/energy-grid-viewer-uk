@@ -22,8 +22,12 @@ No test framework is configured — linting is the only automated check.
 ### Data Flow
 
 ```
-Browser → /api/elexon → PN → BOALF → FUELINST  (priority fallback chain)
-Browser → /api/units  → data.elexon.co.uk/bmrs/api/v1/reference/bmunits/all
+Browser → /api/elexon         → PN → BOALF → FUELINST  (priority fallback chain)
+Browser → /api/elexon/history → BOALF for a specific past date
+Browser → /api/units          → data.elexon.co.uk/bmrs/api/v1/reference/bmunits/all
+Browser → /api/sites          → BOALF per-unit live leaderboard
+Browser → /api/prices         → Octopus Agile half-hourly p/kWh (Region A)
+Browser → /api/carbon         → api.carbonintensity.org.uk half-hourly gCO₂/kWh
 ```
 
 The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source = "mock"`) if all Elexon sources fail.
@@ -31,7 +35,8 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 ### Rendering Strategy
 
 - **`src/app/page.tsx`** — server component; calls `fetchStorageData()` at request time so the page arrives fully rendered
-- **`src/components/Dashboard.tsx`** — client component (`"use client"`); owns tab state, 5-minute auto-refresh, and all interactive state. Three tabs: Live Overview, Fleet Directory, Site Map
+- **`src/components/Dashboard.tsx`** — client component (`"use client"`); owns tab state, 5-minute auto-refresh, and all interactive state. Four tabs: Live Overview, Live Sites, Fleet Directory, Site Map
+- **`src/components/SitesTab.tsx`** — client component; per-site live leaderboard (~69 sites, ~79 BMUs) ranked by |currentMW|, pulls from `/api/sites`
 - **`src/components/UnitsTab.tsx`** — client component; fleet directory with search/sort/filter, pulls from `/api/units`
 - **`src/components/UKMap.tsx`** — client component; loaded via `dynamic(..., { ssr: false })` because `react-simple-maps` uses `d3-geo` (ESM-only, breaks SSR)
 
@@ -40,7 +45,11 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 | Route | Purpose |
 |---|---|
 | `GET /api/elexon` | Main data endpoint — returns `StorageDataPoint[]` via PN→BOALF→FUELINST fallback |
+| `GET /api/elexon/history?date=YYYY-MM-DD` | Historical BESS data for a specific past date via BOALF; 1-hour cache |
 | `GET /api/units` | Fleet directory — ~300 storage BMUs from Elexon reference API, module-level cached |
+| `GET /api/sites` | Per-site live leaderboard — BOALF aggregated by physical site |
+| `GET /api/prices` | Octopus Agile half-hourly prices (p/kWh inc. VAT, Region A) |
+| `GET /api/carbon` | Grid carbon intensity half-hourly actuals + forecast (gCO₂eq/kWh) |
 | `GET /api/elexon/debug` | Raw Elexon response inspector |
 | `GET /api/elexon/probe` | Tests endpoint variants (dev only) |
 
@@ -63,6 +72,9 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 - **BMU reference endpoint returns 2.7MB** — exceeds Next.js fetch cache 2MB limit. Both `fetchBessBmuIds()` (in `elexon.ts`) and `/api/units` use module-level in-memory caches with 1-hour TTL instead of `next: { revalidate }`
 - **BOALF/PN responses** also skip the fetch cache (`cache: "no-store"`) to avoid the same issue
 - **~300 storage BMUs** in reference data, identified by `bmUnitType: "S"` or `fuelType: "OTHER"` with capacity > 0.1 MW
+- **PN dataset (`/datasets/PN`) returns 404** as of 2026-05-13 — `fetchStorageData()` falls through immediately to BOALF. The fallback chain is still correct; BOALF is now the effective primary source.
+- **`fetchBessTimeSeries(dataset, dateStr?)`** accepts an optional `dateStr` (YYYY-MM-DD). When omitted it defaults to today; when provided it fetches the full day (00:00–23:59Z) and caches the result for 1 hour. Used by `/api/elexon/history`.
+- **Yesterday overlay** in Dashboard merges historical points into today's chart by matching HH:MM substrings (same technique as the pumped-hydro merge). Renders as a dashed white `<Line>` over the `<AreaChart>`.
 
 ## Site Map (`src/components/UKMap.tsx`)
 
@@ -89,13 +101,24 @@ CSS custom properties defined in `src/app/globals.css`:
 
 Components use inline `style` objects rather than CSS modules or Tailwind.
 
+## Shipped Enhancements
+
+These were not in the original build but have since been added:
+
+- **Octopus Agile price overlay** (`/api/prices`) — half-hourly p/kWh, colour-coded green→red bars. Toggle in main chart header.
+- **Carbon intensity overlay** (`/api/carbon`) — half-hourly gCO₂eq/kWh, colour-coded by index. Toggle in main chart header.
+- **Live Sites tab** (`/api/sites`, `SitesTab`) — per-site leaderboard ranked by |currentMW|, toggle active-only vs all, sortable.
+- **Yesterday overlay** (`/api/elexon/history`, Dashboard) — dashed reference line on the main chart showing the same metric from the previous day. Fetched lazily on first toggle.
+
 ## Possible Enhancements
 
-- Octopus Agile or day-ahead price overlay (explains why batteries charge/discharge when they do)
-- Carbon intensity overlay from `api.carbonintensity.org.uk` (no key needed)
-- Historic day comparison (yesterday vs today)
-- Per-site live view using legacy BMRS API (free key from elexon.co.uk; endpoint: `api.bmreports.com/BMRS/PHYBMDATA/v1`)
-- Improve map coordinates: most non-KNOWN_BESS sites fall back to GSP region centroid; adding more exact coordinates to `src/lib/bess-sites.ts` improves accuracy
+- **Balancing Mechanism prices** — Elexon publishes accepted bid/offer prices per BMU per settlement period. Overlay the dispatch price to explain *why* the fleet moved.
+- **Settlement period P&L estimate** — combine MW output with Agile prices to show estimated revenue per half-hour (MW × p/kWh). Rough but compelling.
+- **Wind/solar generation overlay** — add FUELINST `WIND`/`SOLAR` fields to the main chart; visually shows storage arbitrage (charge when renewables are high, discharge when low).
+- **System Price (SSP/SBP)** — Elexon imbalance price per settlement period; much spikier than Agile and the real driver of BM dispatch. Free from Elexon, no key.
+- **Grid frequency overlay** — National Grid ESO publishes live 50 Hz ± deviation; shows FFR/DC service response in real time.
+- **Improve map coordinates** — most non-KNOWN_BESS sites fall back to GSP region centroid; adding exact coordinates to `src/lib/bess-sites.ts` improves accuracy.
+- **Per-site historic view** — legacy BMRS API (free key from elexon.co.uk; endpoint: `api.bmreports.com/BMRS/PHYBMDATA/v1`)
 
 ## Production Deployment
 

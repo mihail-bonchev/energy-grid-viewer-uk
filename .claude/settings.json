@@ -29,7 +29,22 @@
       "Bash(curl -s \"http://localhost:3000/api/sites\")",
       "Bash(python3 -c ' *)",
       "WebFetch(domain:arxiv.org)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk status)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk log --oneline -5)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk remote -v)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk fetch origin)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk log --oneline origin/main -5)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk log --oneline main -5)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk pull --rebase origin main)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk stash)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk stash pop)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk push origin main)",
+      "WebFetch(domain:data.elexon.co.uk)",
+      "WebFetch(domain:grid.xelantis.com)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk add src/components/Dashboard.tsx)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk diff --staged)",
+      "Bash(git -C /Users/mihailbonchev/code-repos/energy-grid-viewer-uk commit -m ' *)"
     ],
     "additionalDirectories": [
       "/Users/mihailbonchev/code-repos/xelantis.com"
