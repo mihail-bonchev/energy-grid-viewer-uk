@@ -11,6 +11,8 @@ import type { ApiResponse, StorageDataPoint } from "@/lib/elexon";
 import type { PricePoint } from "@/lib/prices";
 import type { CarbonPoint } from "@/lib/carbon";
 import type { BmPricePoint } from "@/lib/bm-prices";
+import { computePnl } from "@/lib/pnl";
+import type { PnlPoint } from "@/lib/pnl";
 import UnitsTab from "@/components/UnitsTab";
 import SitesTab from "@/components/SitesTab";
 
@@ -213,6 +215,41 @@ function CarbonTooltip({ active, payload, label }: {
   );
 }
 
+function PnlTooltip({ active, payload, label }: {
+  active?: boolean;
+  payload?: Array<{ value: number; payload: PnlPoint }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const { value, payload: entry } = payload[0];
+  const color = value >= 0 ? "var(--discharge)" : "#ef4444";
+  return (
+    <div style={{
+      background: "rgba(7,8,15,0.96)", border: "1px solid var(--border)",
+      borderRadius: 8, padding: "10px 16px",
+      fontFamily: "var(--font-mono)", fontSize: 12,
+      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    }}>
+      <div style={{ color: "var(--text-dim)", marginBottom: 8 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+        <span style={{ color: "var(--text-mid)" }}>Est. P&amp;L</span>
+        <span style={{ color, fontWeight: 700, marginLeft: "auto" }}>
+          {value >= 0 ? "+" : ""}£{value.toLocaleString()}k
+        </span>
+      </div>
+      <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 3 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: "var(--text-dim)", fontSize: 10 }}>
+          <span>avg MW</span><span style={{ color: "var(--text-mid)" }}>{entry.avgMW.toLocaleString()} MW</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: "var(--text-dim)", fontSize: 10 }}>
+          <span>Agile price</span><span style={{ color: "var(--text-mid)" }}>{entry.price.toFixed(2)} p/kWh</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BmPricesTooltip({ active, payload, label }: {
   active?: boolean;
   payload?: Array<{ value: number; name: string; color: string; payload: BmPricePoint }>;
@@ -260,6 +297,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   const [showCarbon, setShowCarbon] = useState(false);
   const [showYesterday, setShowYesterday] = useState(false);
   const [showBmPrices, setShowBmPrices] = useState(false);
+  const [showPnl, setShowPnl] = useState(false);
   const yesterdayFetchedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -352,6 +390,17 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
       yesterday: yByMinute.get(p.time.substring(11, 16)) ?? null,
     }));
   }, [data, yesterdayData, selectedView, showYesterday]);
+
+  const pnlData = useMemo<PnlPoint[]>(() => {
+    if (!showPnl || !priceData.length || !data.length) return [];
+    const bessPoints = data.map((p) => ({
+      time: new Date(p.time).toLocaleTimeString("en-GB", {
+        hour: "2-digit", minute: "2-digit", timeZone: "Europe/London",
+      }),
+      mw: p[selectedView],
+    }));
+    return computePnl(bessPoints, priceData);
+  }, [data, priceData, selectedView, showPnl]);
 
   const todayMax = data.length ? Math.max(...data.map((d) => d.battery)) : 0;
   const todayMin = data.length ? Math.min(...data.map((d) => d.battery)) : 0;
@@ -605,6 +654,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                 { key: "carbon",    label: "🌱 Carbon",    active: showCarbon,    toggle: () => setShowCarbon((v) => !v) },
                 { key: "yesterday", label: "📅 Yesterday", active: showYesterday, toggle: () => { setShowYesterday((v) => !v); fetchYesterday(); } },
                 { key: "bmprices",  label: "💷 BM Price",  active: showBmPrices,  toggle: () => setShowBmPrices((v) => !v) },
+                { key: "pnl",       label: "💰 P&L",       active: showPnl,       toggle: () => setShowPnl((v) => !v) },
               ] as { key: string; label: string; active: boolean; toggle: () => void }[]).map(({ key, label, active, toggle }) => (
                 <button
                   key={key}
@@ -863,6 +913,86 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
             </div>
           </div>
         )}
+
+        {/* ── Estimated P&L overlay ────────────────────────────────────────── */}
+        {showPnl && (() => {
+          const totalPnl = pnlData.reduce((s, p) => s + p.pnl, 0);
+          const totalPnlRounded = Math.round(totalPnl * 10) / 10;
+          const pnlPositive = totalPnlRounded >= 0;
+          return (
+            <div className="animate-fade-up" style={{
+              background: "var(--bg-card)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-lg)", padding: "24px",
+              marginBottom: 20,
+            }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4, gap: 16 }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 15 }}>
+                    Estimated Revenue — Today · {viewKeys.find((v) => v.key === selectedView)?.label}
+                  </div>
+                  <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 3 }}>
+                    MW output × Agile half-hourly price (Region A) · £k per settlement period · gross estimate only
+                  </div>
+                </div>
+                {pnlData.length > 0 && (
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ color: "var(--text-dim)", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase" }}>Today so far</div>
+                    <div style={{
+                      fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 20,
+                      color: pnlPositive ? "var(--discharge)" : "#ef4444",
+                      marginTop: 2,
+                    }}>
+                      {pnlPositive ? "+" : ""}£{totalPnlRounded.toLocaleString()}k
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {!priceData.length ? (
+                <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>
+                  Enable Prices overlay first to see P&amp;L (prices not yet loaded)
+                </div>
+              ) : pnlData.length === 0 ? (
+                <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>Loading…</div>
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={160}>
+                    <BarChart data={pnlData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                      <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                      <XAxis
+                        dataKey="time"
+                        stroke="transparent"
+                        tick={{ fill: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                        interval={5}
+                      />
+                      <YAxis
+                        tickFormatter={(v: number) => `£${v}k`}
+                        stroke="transparent"
+                        tick={{ fill: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                        width={50}
+                      />
+                      <Tooltip content={<PnlTooltip />} />
+                      <ReferenceLine y={0} stroke="rgba(255,255,255,0.25)" strokeDasharray="5 5" />
+                      <Bar dataKey="pnl" radius={[2, 2, 0, 0]}>
+                        {pnlData.map((entry, i) => (
+                          <Cell
+                            key={i}
+                            fill={entry.pnl >= 0 ? "var(--discharge)" : "#ef4444"}
+                            fillOpacity={0.8}
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div style={{ color: "var(--text-dim)", fontSize: 10, marginTop: 8 }}>
+                    Gross estimate only — uses Agile Region A retail price as proxy. Ignores BM dispatch, imbalance, ancillary, and capacity revenues.
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── Bottom row: hourly bars + info ────────────────────────────────── */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 20 }}>
