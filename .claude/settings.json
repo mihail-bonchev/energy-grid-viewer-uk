@@ -27,7 +27,12 @@
       "Bash(curl -s \"https://data.elexon.co.uk/bmrs/api/v1/datasets/BOALF?from=2026-05-13T00:00Z&to=2026-05-13T01:00Z&format=json\")",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\)['data'][0]; print\\(json.dumps\\(d, indent=2\\)\\)\")",
       "Bash(curl -s \"http://localhost:3000/api/sites\")",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "WebFetch(domain:arxiv.org)",
+      "Bash(npx tsc *)"
+    ],
+    "additionalDirectories": [
+      "/Users/mihailbonchev/code-repos/xelantis.com"
     ]
   }
 }

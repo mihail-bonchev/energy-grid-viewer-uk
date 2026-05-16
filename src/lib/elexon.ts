@@ -203,13 +203,14 @@ async function fetchBessBmuIds(): Promise<Set<string>> {
   return ids;
 }
 
-// Shared builder: fetches `dataset` (PN or BOALF) for today, filters to BESS BMUs,
-// and produces a 5-min fleet-level time series.
-async function fetchBessTimeSeries(dataset: "PN" | "BOALF"): Promise<StorageDataPoint[]> {
+// Shared builder: fetches `dataset` (PN or BOALF) for a given date (defaults to today),
+// filters to BESS BMUs, and produces a 5-min fleet-level time series.
+async function fetchBessTimeSeries(dataset: "PN" | "BOALF", dateStr?: string): Promise<StorageDataPoint[]> {
   const now = new Date();
-  const todayStr = now.toISOString().split("T")[0];
-  const from = `${todayStr}T00:00Z`;
-  const to = now.toISOString();
+  const targetDate = dateStr ?? now.toISOString().split("T")[0];
+  const isToday = targetDate === now.toISOString().split("T")[0];
+  const from = `${targetDate}T00:00Z`;
+  const to = isToday ? now.toISOString() : `${targetDate}T23:59:59Z`;
 
   const [bessBmus, res] = await Promise.all([
     fetchBessBmuIds(),
@@ -244,9 +245,9 @@ async function fetchBessTimeSeries(dataset: "PN" | "BOALF"): Promise<StorageData
     recs.sort((a, b) => new Date(a.timeFrom).getTime() - new Date(b.timeFrom).getTime());
   }
 
-  // Build 5-min slots from midnight to now
-  const startMs = new Date(`${todayStr}T00:00:00Z`).getTime();
-  const endMs = now.getTime();
+  // Build 5-min slots from midnight to end of target period
+  const startMs = new Date(`${targetDate}T00:00:00Z`).getTime();
+  const endMs = isToday ? now.getTime() : new Date(`${targetDate}T23:59:59Z`).getTime();
   const slots: number[] = [];
   for (let t = startMs; t <= endMs; t += 5 * 60 * 1000) slots.push(t);
 
@@ -267,6 +268,15 @@ async function fetchBessTimeSeries(dataset: "PN" | "BOALF"): Promise<StorageData
       total: Math.round(battery),
     };
   });
+}
+
+// Fetch BESS data for a specific historical date (YYYY-MM-DD). Uses BOALF only.
+export async function fetchStorageDataForDate(dateStr: string): Promise<StorageDataPoint[]> {
+  try {
+    return await fetchBessTimeSeries("BOALF", dateStr);
+  } catch {
+    return [];
+  }
 }
 
 // Priority: PN (operator plans, best charging signal) → BOALF (SO dispatch) → FUELINST (aggregate, no BESS charging)

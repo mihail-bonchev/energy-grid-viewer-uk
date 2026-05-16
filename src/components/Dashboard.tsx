@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
-  AreaChart, Area, BarChart, Bar, Cell,
+  AreaChart, Area, Line, BarChart, Bar, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, ResponsiveContainer,
 } from "recharts";
@@ -222,8 +222,11 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   const [activeTab, setActiveTab] = useState<MainTab>("overview");
   const [priceData, setPriceData] = useState<PricePoint[]>([]);
   const [carbonData, setCarbonData] = useState<CarbonPoint[]>([]);
+  const [yesterdayData, setYesterdayData] = useState<StorageDataPoint[]>([]);
   const [showPrices, setShowPrices] = useState(false);
   const [showCarbon, setShowCarbon] = useState(false);
+  const [showYesterday, setShowYesterday] = useState(false);
+  const yesterdayFetchedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -261,6 +264,21 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
     }
   }, []);
 
+  const fetchYesterday = useCallback(async () => {
+    if (yesterdayFetchedRef.current) return;
+    yesterdayFetchedRef.current = true;
+    try {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - 1);
+      const dateStr = d.toISOString().split("T")[0];
+      const res = await fetch(`/api/elexon/history?date=${dateStr}`, { cache: "no-store" });
+      const json = await res.json();
+      if (json.data?.length) setYesterdayData(json.data);
+    } catch (err) {
+      console.error("Yesterday fetch failed", err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchPrices();
     fetchCarbon();
@@ -276,6 +294,19 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   const latest = data[data.length - 1];
   const currentMW = latest?.[selectedView] ?? 0;
   const status = getStatus(currentMW);
+
+  // Merge yesterday's data into today's chart points by matching HH:MM
+  const mergedData = useMemo(() => {
+    if (!showYesterday || !yesterdayData.length) return data;
+    const yByMinute = new Map<string, number>();
+    for (const p of yesterdayData) {
+      yByMinute.set(p.time.substring(11, 16), p[selectedView]);
+    }
+    return data.map((p) => ({
+      ...p,
+      yesterday: yByMinute.get(p.time.substring(11, 16)) ?? null,
+    }));
+  }, [data, yesterdayData, selectedView, showYesterday]);
 
   const todayMax = data.length ? Math.max(...data.map((d) => d.battery)) : 0;
   const todayMin = data.length ? Math.min(...data.map((d) => d.battery)) : 0;
@@ -527,6 +558,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
               {([
                 { key: "prices", label: "⚡ Prices", active: showPrices, toggle: () => setShowPrices((v) => !v) },
                 { key: "carbon", label: "🌱 Carbon", active: showCarbon, toggle: () => setShowCarbon((v) => !v) },
+                { key: "yesterday", label: "📅 Yesterday", active: showYesterday, toggle: () => { setShowYesterday((v) => !v); fetchYesterday(); } },
               ] as { key: string; label: string; active: boolean; toggle: () => void }[]).map(({ key, label, active, toggle }) => (
                 <button
                   key={key}
@@ -554,10 +586,16 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                 <span style={{ color: "var(--text-dim)" }}>{l}</span>
               </span>
             ))}
+            {showYesterday && (
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 16, height: 2, background: "rgba(255,255,255,0.4)", borderRadius: 2, display: "inline-block", borderTop: "2px dashed rgba(255,255,255,0.4)" }} />
+                <span style={{ color: "var(--text-dim)" }}>Yesterday</span>
+              </span>
+            )}
           </div>
 
           <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <AreaChart data={mergedData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <defs>
                 {/* Dynamic zero-line split: discharge (green) above zero, charge (blue) below */}
                 <linearGradient id="gradDischarge" x1="0" y1="0" x2="0" y2="1">
@@ -610,6 +648,20 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                 activeDot={false}
                 legendType="none"
               />
+              {/* Yesterday overlay — dashed reference line */}
+              {showYesterday && yesterdayData.length > 0 && (
+                <Line
+                  type="monotone"
+                  dataKey="yesterday"
+                  name="Yesterday"
+                  stroke="rgba(255,255,255,0.35)"
+                  strokeWidth={1.5}
+                  strokeDasharray="5 4"
+                  dot={false}
+                  activeDot={{ r: 4, fill: "rgba(255,255,255,0.5)", stroke: "none" }}
+                  connectNulls={false}
+                />
+              )}
             </AreaChart>
           </ResponsiveContainer>
         </div>
