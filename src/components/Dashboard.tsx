@@ -12,10 +12,12 @@ import type { PricePoint } from "@/lib/prices";
 import type { CarbonPoint } from "@/lib/carbon";
 import type { BmPricePoint } from "@/lib/bm-prices";
 import type { MarketPricePoint } from "@/lib/market-price";
+import type { SystemPricePoint } from "@/lib/system-prices";
 import { computePnl } from "@/lib/pnl";
 import type { PnlPoint } from "@/lib/pnl";
 import UnitsTab from "@/components/UnitsTab";
 import SitesTab from "@/components/SitesTab";
+import SystemPricePanel from "@/components/SystemPricePanel";
 
 const UKMap = dynamic(() => import("@/components/UKMap"), { ssr: false });
 import { fmtMW, fmtTime, getStatus } from "@/lib/elexon";
@@ -245,7 +247,7 @@ function PnlTooltip({ active, payload, label }: {
           <span>avg MW</span><span style={{ color: "var(--text-mid)" }}>{entry.avgMW.toLocaleString()} MW</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: "var(--text-dim)", fontSize: 10 }}>
-          <span>Market price</span><span style={{ color: "var(--text-mid)" }}>£{entry.price.toFixed(2)}/MWh</span>
+          <span>Price</span><span style={{ color: "var(--text-mid)" }}>£{entry.price.toFixed(2)}/MWh</span>
         </div>
       </div>
     </div>
@@ -321,11 +323,14 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   const [yesterdayData, setYesterdayData] = useState<StorageDataPoint[]>([]);
   const [bmPricesData, setBmPricesData] = useState<BmPricePoint[]>([]);
   const [marketPriceData, setMarketPriceData] = useState<MarketPricePoint[]>([]);
+  const [systemPriceData, setSystemPriceData] = useState<SystemPricePoint[]>([]);
   const [showPrices, setShowPrices] = useState(false);
   const [showCarbon, setShowCarbon] = useState(false);
   const [showYesterday, setShowYesterday] = useState(false);
   const [showBmPrices, setShowBmPrices] = useState(false);
   const [showPnl, setShowPnl] = useState(false);
+  const [pnlBasis, setPnlBasis] = useState<"market" | "system">("market");
+  const [showSystemPrice, setShowSystemPrice] = useState(false);
   const [showRenewables, setShowRenewables] = useState(false);
   const yesterdayFetchedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -385,6 +390,16 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
     }
   }, []);
 
+  const fetchSystemPrices = useCallback(async () => {
+    try {
+      const res = await fetch("/api/system-prices", { cache: "no-store" });
+      const json = await res.json();
+      if (json.data) setSystemPriceData(json.data);
+    } catch (err) {
+      console.error("System prices fetch failed", err);
+    }
+  }, []);
+
   const fetchYesterday = useCallback(async () => {
     if (yesterdayFetchedRef.current) return;
     yesterdayFetchedRef.current = true;
@@ -410,10 +425,15 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
     };
   }, [refresh, fetchPrices, fetchCarbon, fetchBmPrices]);
 
-  // Market prices drive the P&L panel; fetched while it is open, refreshed with the main data
+  // Market and system prices feed the P&L and System Price panels; fetched while
+  // either is open and refreshed with the main data
+  const needSystemPrices = showSystemPrice || (showPnl && pnlBasis === "system");
   useEffect(() => {
-    if (showPnl) fetchMarketPrice();
-  }, [showPnl, apiData, fetchMarketPrice]);
+    if (showPnl || showSystemPrice) fetchMarketPrice();
+  }, [showPnl, showSystemPrice, apiData, fetchMarketPrice]);
+  useEffect(() => {
+    if (needSystemPrices) fetchSystemPrices();
+  }, [needSystemPrices, apiData, fetchSystemPrices]);
 
   const { data, meta } = apiData;
   const latest = data[data.length - 1];
@@ -434,15 +454,16 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   }, [data, yesterdayData, selectedView, showYesterday]);
 
   const pnlData = useMemo<PnlPoint[]>(() => {
-    if (!showPnl || !marketPriceData.length || !data.length) return [];
+    const pnlPrices = pnlBasis === "system" ? systemPriceData : marketPriceData;
+    if (!showPnl || !pnlPrices.length || !data.length) return [];
     const bessPoints = data.map((p) => ({
       time: new Date(p.time).toLocaleTimeString("en-GB", {
         hour: "2-digit", minute: "2-digit", timeZone: "Europe/London",
       }),
       mw: p[selectedView],
     }));
-    return computePnl(bessPoints, marketPriceData);
-  }, [data, marketPriceData, selectedView, showPnl]);
+    return computePnl(bessPoints, pnlPrices);
+  }, [data, marketPriceData, systemPriceData, pnlBasis, selectedView, showPnl]);
 
   const todayMax = data.length ? Math.max(...data.map((d) => d.battery)) : 0;
   const todayMin = data.length ? Math.min(...data.map((d) => d.battery)) : 0;
@@ -696,6 +717,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                 { key: "carbon",     label: "🌱 Carbon",       active: showCarbon,     toggle: () => setShowCarbon((v) => !v) },
                 { key: "yesterday",  label: "📅 Yesterday",    active: showYesterday,  toggle: () => { setShowYesterday((v) => !v); fetchYesterday(); } },
                 { key: "bmprices",   label: "💷 BM Price",     active: showBmPrices,   toggle: () => setShowBmPrices((v) => !v) },
+                { key: "sysprice",   label: "⚖️ System Price", active: showSystemPrice, toggle: () => setShowSystemPrice((v) => !v) },
                 { key: "pnl",        label: "💰 P&L",          active: showPnl,        toggle: () => setShowPnl((v) => !v) },
                 { key: "renewables", label: "🌬️ Renewables",  active: showRenewables, toggle: () => setShowRenewables((v) => !v) },
               ] as { key: string; label: string; active: boolean; toggle: () => void }[]).map(({ key, label, active, toggle }) => (
@@ -957,6 +979,9 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
           </div>
         )}
 
+        {/* ── System price & imbalance overlay ─────────────────────────────── */}
+        {showSystemPrice && <SystemPricePanel data={systemPriceData} marketPrices={marketPriceData} />}
+
         {/* ── Estimated P&L overlay ────────────────────────────────────────── */}
         {showPnl && (() => {
           const totalPnl = pnlData.reduce((s, p) => s + p.pnl, 0);
@@ -975,7 +1000,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                     Estimated Revenue — Today · {viewKeys.find((v) => v.key === selectedView)?.label}
                   </div>
                   <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 3 }}>
-                    MW output × Elexon Market Index Price · £k per settlement period · gross estimate only
+                    MW output × {pnlBasis === "system" ? "System (imbalance) price" : "Elexon Market Index Price"} · £k per settlement period · gross estimate only
                   </div>
                 </div>
                 {pnlData.length > 0 && (
@@ -992,8 +1017,26 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                 )}
               </div>
 
-              {!marketPriceData.length ? (
-                <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>Loading market prices…</div>
+              <div style={{ display: "flex", gap: 4, margin: "10px 0 12px" }}>
+                {([["market", "Market index"], ["system", "System price"]] as const).map(([basis, label]) => (
+                  <button
+                    key={basis}
+                    onClick={() => setPnlBasis(basis)}
+                    style={{
+                      background: pnlBasis === basis ? "rgba(255,255,255,0.08)" : "transparent",
+                      border: pnlBasis === basis ? "1px solid var(--border)" : "1px solid transparent",
+                      borderRadius: 6, padding: "4px 10px",
+                      color: pnlBasis === basis ? "var(--text)" : "var(--text-dim)",
+                      fontSize: 11, cursor: "pointer", fontFamily: "var(--font-sans)",
+                    }}
+                  >
+                    Value at {label}
+                  </button>
+                ))}
+              </div>
+
+              {!(pnlBasis === "system" ? systemPriceData : marketPriceData).length ? (
+                <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>Loading prices…</div>
               ) : pnlData.length === 0 ? (
                 <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>Loading…</div>
               ) : (
@@ -1027,7 +1070,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                     </BarChart>
                   </ResponsiveContainer>
                   <div style={{ color: "var(--text-dim)", fontSize: 10, marginTop: 8 }}>
-                    Gross estimate only — values output at the wholesale Market Index Price (APX). Ignores BM bid/offer prices, imbalance, ancillary and capacity revenues.
+                    Gross estimate only — values output at the {pnlBasis === "system" ? "System (imbalance) price, roughly what balancing activity earns" : "wholesale Market Index Price (APX), roughly what trading earns"}. Ignores BM bid/offer prices, ancillary and capacity revenues. The latest half-hours appear once prices are published.
                   </div>
                 </>
               )}

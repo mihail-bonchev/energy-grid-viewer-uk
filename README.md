@@ -11,7 +11,8 @@ Live at [grid.xelantis.com](https://grid.xelantis.com).
   - Agile price
   - Carbon intensity
   - BM bid/offer prices
-  - Estimated P&L at the wholesale Market Index Price
+  - System (imbalance) price with net imbalance volume
+  - Estimated P&L at the wholesale Market Index Price or the system price
   - Wind
   - Yesterday's curve for comparison
 - **Live Sites**: per-site leaderboard of current output, with a "BM" tag where a System Operator instruction is in force, and a per-site history modal
@@ -29,6 +30,7 @@ Browser → /api/sites           → Elexon PN + BOALF, aggregated per site
 Browser → /api/units           → Elexon /reference/bmunits/all
 Browser → /api/bm-prices       → Elexon BOD/stream (submitted bid/offer prices)
 Browser → /api/market-price    → Elexon market index (APXMIDP)
+Browser → /api/system-prices   → Elexon system prices (SSP/SBP, NIV)
 Browser → /api/prices          → Octopus Agile (Region A)
 Browser → /api/carbon          → api.carbonintensity.org.uk
 ```

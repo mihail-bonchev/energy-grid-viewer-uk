@@ -56,6 +56,7 @@ Browser → /api/prices         → Octopus Agile half-hourly p/kWh (Region A)
 Browser → /api/carbon         → api.carbonintensity.org.uk half-hourly gCO₂/kWh
 Browser → /api/bm-prices      → Elexon BOD/stream, one request for the day filtered to BESS units
 Browser → /api/market-price   → Elexon market index (APXMIDP) £/MWh — drives the P&L panel
+Browser → /api/system-prices  → Elexon imbalance price (SSP/SBP) + NIV per SP for today's settlement date
 ```
 
 The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source = "mock"`) if all Elexon sources fail.
@@ -79,6 +80,7 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 | `GET /api/prices` | Octopus Agile half-hourly prices (p/kWh inc. VAT, Region A) |
 | `GET /api/carbon` | Grid carbon intensity half-hourly actuals + forecast (gCO₂eq/kWh) |
 | `GET /api/market-price` | Elexon Market Index Price (APXMIDP) per SP, £/MWh |
+| `GET /api/system-prices` | Elexon system (imbalance) price SSP/SBP and NIV per SP, today's London settlement date |
 | `GET /api/elexon/debug` | FUELINST fuel-type inspector (404 in production) |
 | `GET /api/elexon/probe` | Tests endpoint variants (404 in production) |
 
@@ -146,12 +148,12 @@ These were not in the original build but have since been added:
 - **PN as primary source** — PN with BOALF overrides for every BESS series (main chart, yesterday, sites, site history). Merchant charging visible.
 - **Yesterday overlay** (`/api/elexon/history`, Dashboard) — dashed reference line on the main chart showing the same metric from the previous day. Fetched lazily on first toggle.
 - **BM bid/offer prices overlay** (`/api/bm-prices`, `src/lib/bm-prices.ts`) — fleet-average *submitted* (not accepted) bid/offer prices per SP from Elexon BOD/stream. Offer (amber) = discharge price £/MWh; Bid (blue) = charge price. Toggle in main chart header.
-- **Settlement period P&L estimate** (`src/lib/pnl.ts`) — estimated gross revenue per SP: `avgMW × MIP / 2000` (£k), MIP = Elexon Market Index Price £/MWh (`/api/market-price`). Bar chart with running daily total. Toggle in main chart header.
+- **Settlement period P&L estimate** (`src/lib/pnl.ts`) — estimated gross revenue per SP: `avgMW × price / 2000` (£k). Basis switch in the panel: Market Index Price (`/api/market-price`, default) or System price (`/api/system-prices`). Bar chart with running daily total. Toggle in main chart header.
+- **System price overlay** (`/api/system-prices`, `src/lib/system-prices.ts`, `src/components/SystemPricePanel.tsx`) — SSP line (pink) with dashed Market Index Price for comparison, NIV bars on a right axis (red = system short, blue = long). Toggle "⚖️ System Price". Initial settlement values, published ~20 min after each SP.
 - **Wind & solar overlay** (`StorageDataPoint.wind/solar`) — FUELINST WIND and SOLAR fields threaded through the data pipeline. Teal (wind) and yellow (solar) lines in a separate panel. Toggle in main chart header.
 
 ## Possible Enhancements
 
-- **System Price (SSP/SBP)** — Elexon imbalance price per settlement period; much spikier than Agile and the real driver of BM dispatch. Free from Elexon, no key.
 - **Grid frequency overlay** — National Grid ESO publishes live 50 Hz ± deviation; shows FFR/DC service response in real time.
 - **Improve map coordinates** — ~80 transmission-connected BMUs have no GSP group; adding their sites to `SITE_COORDS` in `src/lib/bess-sites.ts` puts them on the map.
 - **Per-site historic view** (`fetchSiteTimeSeries`, `/api/elexon/history?date=&site=`, `SiteHistoryModal`) — History button per site row in Live Sites tab; opens modal with date picker and per-site PN+BOALF charge/discharge chart. No API key needed.

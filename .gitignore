@@ -22,3 +22,7 @@ tsconfig.tsbuildinfo
 # misc
 {src/
 ideation/
+
+# Playwright
+test-results/
+playwright-report/

@@ -19,12 +19,12 @@ test.describe("Overlay toggles", () => {
 
     test("clicking Yesterday again hides the legend entry", async ({ page }) => {
       const btn = page.getByRole("button", { name: /Yesterday/ });
+      // Exact text matches only the legend label; the button reads "📅 Yesterday"
+      const legendEntries = page.getByText("Yesterday", { exact: true });
       await btn.click(); // on
+      await expect(legendEntries).toHaveCount(1);
       await btn.click(); // off
-      // Legend entry should disappear (only the button text remains, not the legend chip)
-      const legendEntries = page.locator("span", { hasText: "Yesterday" });
-      // Button itself has the text, but the legend span should not exist
-      await expect(legendEntries).toHaveCount(1); // just the button
+      await expect(legendEntries).toHaveCount(0);
     });
   });
 
@@ -74,6 +74,34 @@ test.describe("Overlay toggles", () => {
       await expect(page.getByText("Grid Carbon Intensity")).toBeVisible();
       await btn.click();
       await expect(page.getByText("Grid Carbon Intensity")).not.toBeVisible();
+    });
+  });
+
+  test.describe("System price overlay", () => {
+    test("System Price toggle is present", async ({ page }) => {
+      await expect(page.getByRole("button", { name: /System Price/ })).toBeVisible();
+    });
+
+    test("clicking System Price shows the imbalance chart section", async ({ page }) => {
+      await page.getByRole("button", { name: /System Price/ }).click();
+      await expect(page.getByText(/System Price & Imbalance/)).toBeVisible();
+      await expect(page.getByText(/SSP\/SBP/)).toBeVisible();
+    });
+
+    test("clicking System Price again hides the chart", async ({ page }) => {
+      const btn = page.getByRole("button", { name: /System Price/ });
+      await btn.click();
+      await expect(page.getByText(/System Price & Imbalance/)).toBeVisible();
+      await btn.click();
+      await expect(page.getByText(/System Price & Imbalance/)).not.toBeVisible();
+    });
+  });
+
+  test.describe("P&L price basis", () => {
+    test("P&L can be valued at the system price", async ({ page }) => {
+      await page.getByRole("button", { name: /P&L/ }).click();
+      await page.getByRole("button", { name: /Value at System price/ }).click();
+      await expect(page.getByText(/System \(imbalance\) price/).first()).toBeVisible();
     });
   });
 
