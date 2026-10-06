@@ -117,34 +117,52 @@ export interface BoalfRecord {
   acceptanceNumber: number;
 }
 
+// Numeric form of a BOALF row — timestamps parsed once, not per slot.
+interface Segment { from: number; to: number; levelFrom: number; levelTo: number; acc: number }
+
+function toSegments(recs: BoalfRecord[]): Segment[] {
+  return recs
+    .map((r) => ({
+      from: Date.parse(r.timeFrom),
+      to: Date.parse(r.timeTo),
+      levelFrom: r.levelFrom,
+      levelTo: r.levelTo,
+      acc: r.acceptanceNumber,
+    }))
+    .sort((a, b) => a.from - b.from);
+}
+
+// Among segments covering `t`, the latest acceptance wins (ties → later start);
+// interpolate linearly along it. No covering segment → 0 MW.
+function levelFromCandidates(cands: Iterable<Segment>, t: number): number {
+  let best: Segment | null = null;
+  for (const s of cands) {
+    if (!(s.from <= t && t < s.to)) continue;
+    if (!best || s.acc > best.acc || (s.acc === best.acc && s.from > best.from)) best = s;
+  }
+  if (!best) return 0;
+  return best.levelFrom + (best.levelTo - best.levelFrom) * ((t - best.from) / (best.to - best.from));
+}
+
 // BM-instructed level at time `t` (ms). Each BOALF row is a linear segment over
 // [timeFrom, timeTo); where acceptances overlap, the latest acceptance wins.
 // Outside every segment there is no instruction in force → 0 MW.
 export function boalfLevelAt(recs: BoalfRecord[], t: number): number {
-  let best: BoalfRecord | null = null;
-  let bestFrom = 0;
-  for (const r of recs) {
-    const from = Date.parse(r.timeFrom);
-    const to = Date.parse(r.timeTo);
-    if (!(from <= t && t < to)) continue;
-    if (!best || r.acceptanceNumber > best.acceptanceNumber ||
-        (r.acceptanceNumber === best.acceptanceNumber && from > bestFrom)) {
-      best = r;
-      bestFrom = from;
-    }
-  }
-  if (!best) return 0;
-  const to = Date.parse(best.timeTo);
-  const frac = (t - bestFrom) / (to - bestFrom);
-  return best.levelFrom + (best.levelTo - best.levelFrom) * frac;
+  return levelFromCandidates(toSegments(recs), t);
 }
 
 // Fleet/site total per 5-min slot between startMs and endMs (inclusive).
+// Sweeps each BMU's sorted segments once, keeping only those currently in force.
 export function boalfSeries(byBmu: Map<string, BoalfRecord[]>, startMs: number, endMs: number): Array<{ time: string; mw: number }> {
+  const sweeps = [...byBmu.values()].map((recs) => ({ segs: toSegments(recs), next: 0, active: [] as Segment[] }));
   const out: Array<{ time: string; mw: number }> = [];
   for (let t = startMs; t <= endMs; t += 5 * 60 * 1000) {
     let mw = 0;
-    for (const recs of byBmu.values()) mw += boalfLevelAt(recs, t);
+    for (const sw of sweeps) {
+      while (sw.next < sw.segs.length && sw.segs[sw.next].from <= t) sw.active.push(sw.segs[sw.next++]);
+      sw.active = sw.active.filter((seg) => seg.to > t);
+      mw += levelFromCandidates(sw.active, t);
+    }
     out.push({ time: new Date(t).toISOString(), mw: Math.round(mw) });
   }
   return out;

@@ -569,7 +569,7 @@ export default function SitesTab() {
             padding: "48px 24px", textAlign: "center",
             color: TEXT_DIM, fontFamily: "var(--font-mono)", fontSize: 13,
           }}>
-            No active sites right now — try enabling "Show idle"
+            No active sites right now — try enabling &ldquo;Show idle&rdquo;
           </div>
         )}
       </div>
