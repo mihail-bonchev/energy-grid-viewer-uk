@@ -1,37 +1,62 @@
-// Exact [lng, lat] for known grid-scale BESS sites, keyed by the
-// nationalGridBmUnit prefix (everything before the last "-N" unit number).
-// Coordinates are approximate centroid of each physical site.
+// [lng, lat] for known BESS sites, keyed by site ID: the nationalGridBmUnit
+// minus its trailing "-N" (e.g. "KILSB-3" → "KILSB"). NG IDs carry no E_/T_ prefix.
+// Each site is identified from its Elexon bmUnitName or lead party; coordinates
+// are town-level approximations, not surveyed site locations.
 export const SITE_COORDS: Record<string, [number, number]> = {
-  // From KNOWN_BESS in units-route.ts
-  "E_MINETY":  [-1.968,  51.634],  // Minety, Wiltshire
-  "E_PILGR":   [-0.408,  53.783],  // Pillswood, E. Yorkshire
-  "E_STAPL":   [-1.083,  51.204],  // Staple Cross, Hampshire
-  "E_PYLNW":   [-2.580,  51.140],  // Pylle, Somerset
-  "E_COWES":   [-1.300,  50.759],  // Cowes, Isle of Wight
-  "E_BAGE1":   [-3.811,  51.637],  // Baglan Bay, South Wales
-  "E_GOWGE":   [-1.537,  53.427],  // Gowge, S. Yorkshire
-  "T_BTUFW":   [-3.175,  53.488],  // Burbo Bank, Merseyside
-  // Additional well-known sites
-  "E_GLSNB":   [ 0.558,  51.105],  // Glassenbury, Kent
-  "E_COTPS":   [-0.776,  53.308],  // Cottam, Nottinghamshire
-  "E_BLYTH":   [-1.513,  55.126],  // Blyth, Northumberland
-  "E_DODDG":   [-0.296,  53.196],  // Doddington, Lincolnshire
-  "E_HOLBW":   [-2.006,  50.719],  // Holes Bay, Dorset
-  "E_WHILB":   [-4.217,  55.606],  // Whitelee, Scotland
-  "E_CLAYT":   [-1.265,  52.378],  // Claybrooke, Warwickshire
-  "E_CHAPB":   [-1.412,  53.214],  // Chapel, S. Yorkshire
-  "E_DOLLB":   [-2.434,  57.156],  // Dalquhandy, Scotland
-  "E_BERKB":   [-1.183,  51.404],  // Berkshire BESS
-  "E_NTAWB":   [-3.007,  53.269],  // Nant y Moch area, N. Wales
-  "E_WOLVB":   [-2.127,  52.579],  // Wolverhampton area
-  "E_CLAYB":   [-1.265,  52.378],  // Claybrooke, Leics
-  "E_PILLB":   [-0.408,  53.783],  // Pillswood variant
-  "E_MINEB":   [-1.968,  51.634],  // Minety variant
-  "T_HUMR":    [-0.167,  53.700],  // Humber region
-  "T_GANW":    [-3.689,  58.590],  // Gordonbush, Scotland
-  "E_HAWNB":   [-1.371,  54.813],  // Hawthorn Pit, Durham
-  "E_NEVNB":   [ 0.479,  51.569],  // Nevendon, Essex
-  "E_THURB":   [-1.239,  53.390],  // Thurcroft, S. Yorkshire
+  // Scotland
+  "BLHLB":  [-2.930, 57.530],  // Blackhillock (Zenobe), near Keith, Moray
+  "KILSB":  [-4.500, 55.590],  // Kilmarnock South (Zenobe), Ayrshire
+  "COALB":  [-3.870, 55.580],  // Coalburn (Alcemi), S. Lanarkshire
+  "WISHB":  [-3.920, 55.770],  // Wishaw (Zenobe), N. Lanarkshire
+  "NLSTB":  [-4.430, 55.780],  // Neilston, E. Renfrewshire
+  "WHLWB":  [-4.300, 55.680],  // Whitelee Battery, E. Renfrewshire
+  "CATHB":  [-4.200, 55.800],  // Cathkin, Glasgow
+  "DALMB":  [-4.210, 55.840],  // Dalmarnock, Glasgow
+  "ERSKB":  [-4.450, 55.910],  // Erskine, Renfrewshire
+  "BROXB":  [-3.470, 55.930],  // Broxburn, W. Lothian
+  "LITRB":  [-3.310, 56.100],  // Little Raith, Fife
+  "JAMBB":  [-3.330, 56.340],  // Jamesfield, Perth & Kinross
+  "CUPAB":  [-3.270, 56.550],  // Coupar Angus, Perth & Kinross
+  "ARBRB":  [-2.580, 56.560],  // Arbroath, Angus
+  "DYCEB":  [-2.190, 57.200],  // Dyce, Aberdeen
+  // North of England
+  "FBPG02": [-1.371, 54.813],  // Hawthorn Pit, Co. Durham
+  "POTES":  [-1.440, 55.000],  // Port of Tyne, Tyneside
+  "PILLB":  [-0.408, 53.783],  // Pillswood, E. Yorkshire
+  "FERRB":  [-1.280, 53.710],  // Ferrybridge (SSE), W. Yorkshire
+  "MNFRB":  [-1.230, 53.760],  // Monk Fryston (SSE), N. Yorkshire
+  "MKFRB":  [-1.230, 53.760],  // Monk Fryston, N. Yorkshire
+  "WHTBB":  [-2.450, 53.750],  // Whitebirk, Blackburn
+  "SKELB":  [-2.770, 53.550],  // Skelmersdale, Lancashire
+  "OLDHB":  [-2.120, 53.540],  // Oldham, Gtr Manchester
+  "BREDB":  [-2.110, 53.420],  // Bredbury (Pivot Power), Stockport
+  "WBURB":  [-0.810, 53.360],  // West Burton, Nottinghamshire
+  // Midlands & East
+  "BUSTB":  [-1.980, 52.540],  // Bustleholme (Pivot Power), W. Midlands
+  "WOLVB":  [-2.127, 52.579],  // Wolverhampton West
+  "COVNB":  [-1.510, 52.410],  // Coventry (Pivot Power)
+  "BURWB":  [ 0.330, 52.280],  // Burwell, Cambridgeshire
+  "SUNDB":  [-0.470, 51.930],  // Sundon (Pivot Power), Bedfordshire
+  "TEBWB":  [-0.570, 51.940],  // Tebworth, Bedfordshire
+  "COWB":   [-1.200, 51.730],  // Cowley (Pivot Power), Oxford
+  // South East
+  "THURB":  [ 0.330, 51.480],  // Thurrock Storage, Essex
+  "BLPFB":  [ 0.360, 51.550],  // Bulphan Fen, Essex
+  "DOLLB":  [ 0.530, 51.600],  // Dollymans, Essex
+  "BRETB":  [ 0.300, 51.620],  // Brentwood, Essex
+  "KEMB":   [ 0.740, 51.360],  // Kemsley (Pivot Power), Kent
+  "RICHB":  [ 1.340, 51.310],  // Richborough Energy Park, Kent
+  "FARNB":  [-0.800, 51.210],  // Farnham, Surrey
+  "NURSB":  [-1.470, 50.950],  // Nursling, Hampshire
+  // South West & Wales
+  "IRNAB":  [-2.470, 51.560],  // Iron Acton, S. Gloucestershire
+  "BERKB":  [-2.460, 51.690],  // Berkeley, Gloucestershire
+  "BHOLB":  [-2.006, 50.719],  // Holes Bay, Poole
+  "NTAWB":  [-3.900, 50.800],  // North Tawton, Devon
+  "INDQB":  [-4.920, 50.400],  // Indian Queens (Pivot Power), Cornwall
+  "USKMB":  [-2.970, 51.550],  // Uskmouth, Newport
+  "NEWPB":  [-2.990, 51.580],  // Newport BESS
+  "PNYCB":  [-3.620, 51.700],  // Pen y Cymoedd, Neath Port Talbot
 };
 
 // Approximate centroids for Elexon GSP group codes (fallback for unrecognised sites).
@@ -69,7 +94,7 @@ export const GSP_CENTROIDS: Record<string, [number, number]> = {
   "North Wales":           [-3.800,  53.100],
 };
 
-// Given a nationalGridBmUnit like "E_MINETY-1", return [lng, lat] if known.
+// Given a nationalGridBmUnit like "KILSB-3", return [lng, lat] if known.
 // Falls back to GSP group centroid, then geographic centre of GB.
 export function getCoordinates(
   nationalGridBmUnit: string,

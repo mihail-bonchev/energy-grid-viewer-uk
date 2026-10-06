@@ -1,4 +1,4 @@
-import { fmtMW, fmtTime, getStatus, generateMockData } from "@/lib/elexon";
+import { fmtMW, fmtTime, getStatus, generateMockData, mergeFuelInst } from "@/lib/elexon";
 
 // ─── fmtMW ────────────────────────────────────────────────────────────────────
 
@@ -124,5 +124,40 @@ describe("generateMockData", () => {
     const hasNegative = data.some((p) => p.battery < 0);
     expect(hasPositive).toBe(true);
     expect(hasNegative).toBe(true);
+  });
+});
+
+// ─── mergeFuelInst ────────────────────────────────────────────────────────────
+
+describe("mergeFuelInst", () => {
+  const bm = (hhmm: string, battery: number) => ({ time: `2026-05-15T${hhmm}:00.000Z`, battery, pumped: 0, total: battery });
+  const fi = (hhmm: string, pumped: number, wind = 0) => ({ time: `2026-05-15T${hhmm}:00Z`, battery: 0, pumped, total: pumped, wind, solar: 0 });
+
+  it("merges FUELINST values by timestamp and recomputes total", () => {
+    const out = mergeFuelInst([bm("10:00", 100)], [fi("10:00", 500, 8000)]);
+    expect(out[0]).toMatchObject({ battery: 100, pumped: 500, total: 600, wind: 8000 });
+  });
+
+  it("forward-fills the latest FUELINST row when BOALF runs ahead (no drop to 0)", () => {
+    const out = mergeFuelInst(
+      [bm("17:40", 10), bm("17:45", 20), bm("17:50", 30)],
+      [fi("17:40", 1240, 1383), fi("17:45", 1244, 1409)],
+    );
+    expect(out[2]).toMatchObject({ pumped: 1244, wind: 1409, total: 1274 });
+  });
+
+  it("forward-fills over gaps in FUELINST", () => {
+    const out = mergeFuelInst([bm("10:00", 0), bm("10:05", 0), bm("10:10", 0)], [fi("10:00", 300), fi("10:10", 400)]);
+    expect(out.map((p) => p.pumped)).toEqual([300, 300, 400]);
+  });
+
+  it("uses 0 before the first FUELINST row", () => {
+    const out = mergeFuelInst([bm("00:00", 5)], [fi("00:05", 300)]);
+    expect(out[0]).toMatchObject({ pumped: 0, total: 5 });
+  });
+
+  it("handles unsorted FUELINST input", () => {
+    const out = mergeFuelInst([bm("10:07", 0)], [fi("10:05", 2), fi("10:00", 1)]);
+    expect(out[0].pumped).toBe(2);
   });
 });

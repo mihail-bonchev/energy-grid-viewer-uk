@@ -3,6 +3,8 @@
  * Verifies product discovery, tariff code construction, and price parsing.
  */
 
+export {};
+
 type PricesModule = typeof import("@/lib/prices");
 
 const mockFetch = jest.fn();

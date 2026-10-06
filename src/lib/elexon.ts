@@ -1,3 +1,5 @@
+import { fetchBessUnits, groupBoalf, boalfSeries, siteIdOf } from "./bmu";
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface FuelInstRecord {
@@ -183,44 +185,8 @@ export async function fetchElexonFuelInst(): Promise<StorageDataPoint[]> {
 
 // ─── Per-unit bidirectional time-series (shared by PN and BOALF) ─────────────
 
-interface BmLevelRecord {
-  nationalGridBmUnit?: string;
-  bmUnit?: string;         // some endpoints use this instead
-  levelFrom: number;
-  timeFrom: string;
-}
-
-// Module-level cache: avoids re-fetching 2.7MB BMU list on every request.
-// Next.js fetch cache rejects items over 2MB, so we cache the filtered Set ourselves.
-let _bessBmuCache: Set<string> | null = null;
-let _bessBmuCacheAt = 0;
-const BMU_CACHE_TTL = 3_600_000; // 1 hour
-
 export async function fetchBessBmuIds(): Promise<Set<string>> {
-  if (_bessBmuCache && Date.now() - _bessBmuCacheAt < BMU_CACHE_TTL) {
-    return _bessBmuCache;
-  }
-  const res = await fetch(`${ELEXON_BASE}/reference/bmunits/all?format=json`, {
-    cache: "no-store",
-    headers: { Accept: "application/json" },
-  });
-  if (!res.ok) throw new Error(`BMU reference ${res.status}`);
-  const json = await res.json();
-  const all: Record<string, unknown>[] = json?.data ?? json ?? [];
-  const ids = new Set<string>();
-  for (const u of all) {
-    const type = String(u.bmUnitType ?? "");
-    const fuel = String(u.fuelType ?? "");
-    const genCap = parseFloat(String(u.generationCapacity ?? "0"));
-    const demCap = Math.abs(parseFloat(String(u.demandCapacity ?? "0")));
-    if (type === "S" || (fuel === "OTHER" && (genCap > 0.1 || demCap > 0.1))) {
-      const ngId = String(u.nationalGridBmUnit ?? "");
-      if (ngId) ids.add(ngId);
-    }
-  }
-  _bessBmuCache = ids;
-  _bessBmuCacheAt = Date.now();
-  return ids;
+  return new Set((await fetchBessUnits()).map((u) => u.id));
 }
 
 // Shared builder: fetches `dataset` (PN or BOALF) for a given date (defaults to today),
@@ -243,54 +209,19 @@ async function fetchBessTimeSeries(dataset: "PN" | "BOALF", dateStr?: string): P
   if (!res.ok) throw new Error(`${dataset} ${res.status}`);
 
   const json = await res.json();
-  const allRecords: BmLevelRecord[] = json?.data ?? [];
+  const byBmu = groupBoalf(json?.data ?? [], (id) => bessBmus.has(id));
 
-  // Normalise: some endpoints return nationalGridBmUnit, others only bmUnit
-  type NormRecord = { bmuId: string; levelFrom: number; timeFrom: string };
-  const records: NormRecord[] = allRecords
-    .map((r) => ({ bmuId: r.nationalGridBmUnit ?? r.bmUnit ?? "", levelFrom: r.levelFrom, timeFrom: r.timeFrom }))
-    .filter((r) => r.bmuId && bessBmus.has(r.bmuId));
+  if (!byBmu.size) throw new Error(`No ${dataset} records for BESS units`);
 
-  if (!records.length) throw new Error(`No ${dataset} records for BESS units`);
+  console.log(`[${dataset}] ${[...byBmu.values()].reduce((n, r) => n + r.length, 0)} records across ${byBmu.size} BESS BMUs`);
 
-  console.log(`[${dataset}] ${records.length} records across ${new Set(records.map(r => r.bmuId)).size} BESS BMUs`);
-
-  // Group by BMU, sort by timeFrom ascending
-  const byBmu = new Map<string, NormRecord[]>();
-  for (const r of records) {
-    if (!byBmu.has(r.bmuId)) byBmu.set(r.bmuId, []);
-    byBmu.get(r.bmuId)!.push(r);
-  }
-  for (const recs of byBmu.values()) {
-    recs.sort((a, b) => new Date(a.timeFrom).getTime() - new Date(b.timeFrom).getTime());
-  }
-
-  // Build 5-min slots from midnight to end of target period
   const startMs = new Date(`${targetDate}T00:00:00Z`).getTime();
   const endMs = isToday ? now.getTime() : new Date(`${targetDate}T23:59:59Z`).getTime();
-  const slots: number[] = [];
-  for (let t = startMs; t <= endMs; t += 5 * 60 * 1000) slots.push(t);
 
-  return slots.map((slotMs) => {
-    let battery = 0;
-    for (const recs of byBmu.values()) {
-      let mw = 0;
-      for (const r of recs) {
-        if (new Date(r.timeFrom).getTime() <= slotMs) mw = r.levelFrom;
-        else break;
-      }
-      battery += mw;
-    }
-    return {
-      time: new Date(slotMs).toISOString(),
-      battery: Math.round(battery),
-      pumped: 0,
-      total: Math.round(battery),
-    };
-  });
+  return boalfSeries(byBmu, startMs, endMs).map(({ time, mw }) => ({ time, battery: mw, pumped: 0, total: mw }));
 }
 
-// Fetch a single site's BOALF time series for a given date. Filters by BMU prefix (site ID).
+// Fetch a single site's BOALF time series for a given date. Filters by site ID (BMU minus "-N").
 export async function fetchSiteTimeSeries(dateStr: string, siteId: string): Promise<StorageDataPoint[]> {
   const from = `${dateStr}T00:00Z`;
   const to   = `${dateStr}T23:59:59Z`;
@@ -302,46 +233,13 @@ export async function fetchSiteTimeSeries(dateStr: string, siteId: string): Prom
   if (!res.ok) throw new Error(`BOALF ${res.status}`);
 
   const json = await res.json();
-  const allRecords: BmLevelRecord[] = json?.data ?? [];
-
-  type NormRecord = { bmuId: string; levelFrom: number; timeFrom: string };
-  const records: NormRecord[] = allRecords
-    .map((r) => ({ bmuId: r.nationalGridBmUnit ?? r.bmUnit ?? "", levelFrom: r.levelFrom, timeFrom: r.timeFrom }))
-    .filter((r) => r.bmuId && r.bmuId.replace(/-\d+$/, "") === siteId);
-
-  if (!records.length) return [];
-
-  const byBmu = new Map<string, NormRecord[]>();
-  for (const r of records) {
-    if (!byBmu.has(r.bmuId)) byBmu.set(r.bmuId, []);
-    byBmu.get(r.bmuId)!.push(r);
-  }
-  for (const recs of byBmu.values()) {
-    recs.sort((a, b) => new Date(a.timeFrom).getTime() - new Date(b.timeFrom).getTime());
-  }
+  const byBmu = groupBoalf(json?.data ?? [], (id) => siteIdOf(id) === siteId);
+  if (!byBmu.size) return [];
 
   const startMs = new Date(`${dateStr}T00:00:00Z`).getTime();
   const endMs   = new Date(`${dateStr}T23:59:59Z`).getTime();
-  const slots: number[] = [];
-  for (let t = startMs; t <= endMs; t += 5 * 60 * 1000) slots.push(t);
 
-  return slots.map((slotMs) => {
-    let battery = 0;
-    for (const recs of byBmu.values()) {
-      let mw = 0;
-      for (const r of recs) {
-        if (new Date(r.timeFrom).getTime() <= slotMs) mw = r.levelFrom;
-        else break;
-      }
-      battery += mw;
-    }
-    return {
-      time: new Date(slotMs).toISOString(),
-      battery: Math.round(battery),
-      pumped: 0,
-      total: Math.round(battery),
-    };
-  });
+  return boalfSeries(byBmu, startMs, endMs).map(({ time, mw }) => ({ time, battery: mw, pumped: 0, total: mw }));
 }
 
 // Fetch BESS data for a specific historical date (YYYY-MM-DD). Uses BOALF only.
@@ -353,20 +251,24 @@ export async function fetchStorageDataForDate(dateStr: string): Promise<StorageD
   }
 }
 
+// Merge FUELINST pumped/wind/solar into BM-unit points. FUELINST lags BOALF by a
+// few minutes, so each point takes the latest FUELINST row at or before its time
+// (forward-fill) rather than dropping to 0 where no exact HH:MM match exists.
+export function mergeFuelInst(bmPoints: StorageDataPoint[], fuelInst: StorageDataPoint[]): StorageDataPoint[] {
+  const sorted = [...fuelInst].sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
+  let i = -1;
+  return bmPoints.map((p) => {
+    const t = Date.parse(p.time);
+    while (i + 1 < sorted.length && Date.parse(sorted[i + 1].time) <= t) i++;
+    const f = i >= 0 ? sorted[i] : null;
+    const pumped = f?.pumped ?? 0;
+    return { time: p.time, battery: p.battery, pumped, total: p.battery + pumped, wind: f?.wind ?? 0, solar: f?.solar ?? 0 };
+  });
+}
+
 // Priority: PN (operator plans, best charging signal) → BOALF (SO dispatch) → FUELINST (aggregate, no BESS charging)
 export async function fetchStorageData(): Promise<{ data: StorageDataPoint[]; source: "boalf" | "fuelinst" | "mock" }> {
   let fuelInstPoints: StorageDataPoint[] | null = null;
-
-  const mergeWithPumped = (bmPoints: StorageDataPoint[], fuelInst: StorageDataPoint[]) => {
-    const byMinute = new Map<string, { pumped: number; wind: number; solar: number }>();
-    for (const p of fuelInst) {
-      byMinute.set(p.time.substring(0, 16), { pumped: p.pumped, wind: p.wind ?? 0, solar: p.solar ?? 0 });
-    }
-    return bmPoints.map((p: StorageDataPoint) => {
-      const f = byMinute.get(p.time.substring(0, 16)) ?? { pumped: 0, wind: 0, solar: 0 };
-      return { time: p.time, battery: p.battery, pumped: f.pumped, total: p.battery + f.pumped, wind: f.wind, solar: f.solar };
-    });
-  };
 
   // Try PN first — captures both merchant and BM-dispatched operator intentions
   try {
@@ -375,7 +277,7 @@ export async function fetchStorageData(): Promise<{ data: StorageDataPoint[]; so
       fetchElexonFuelInst(),
     ]);
     fuelInstPoints = fuelInst;
-    return { data: mergeWithPumped(pnPoints, fuelInst), source: "boalf" };
+    return { data: mergeFuelInst(pnPoints, fuelInst), source: "boalf" };
   } catch (pnErr) {
     console.error("[Elexon] PN failed, trying BOALF:", pnErr);
   }
@@ -387,7 +289,7 @@ export async function fetchStorageData(): Promise<{ data: StorageDataPoint[]; so
       fuelInstPoints ? Promise.resolve(fuelInstPoints) : fetchElexonFuelInst(),
     ]);
     fuelInstPoints = fuelInst;
-    return { data: mergeWithPumped(boalfPoints, fuelInst), source: "boalf" };
+    return { data: mergeFuelInst(boalfPoints, fuelInst), source: "boalf" };
   } catch (boalfErr) {
     console.error("[Elexon] BOALF failed, falling back to FUELINST:", boalfErr);
   }

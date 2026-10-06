@@ -1,12 +1,14 @@
 /**
  * Behaviour tests for fetchSitesLive.
- * Verifies BOALF → per-site aggregation: BMU grouping, step-hold,
- * site deduplication (strip trailing -N), and sorting.
+ * Verifies BOALF → per-site aggregation: BMU grouping, current level = instruction
+ * in force now (0 once expired), site deduplication (strip trailing -N), and sorting.
  *
- * Call order in fetchSitesLive — Promise.all([fetch(BOALF), fetchBmuMeta()]):
+ * Call order in fetchSitesLive — Promise.all([fetch(BOALF), fetchBessUnits()]):
  *   mockFetch call #1 → BOALF response
  *   mockFetch call #2 → BMU reference response
  */
+
+export {};
 
 type SitesModule = typeof import("@/lib/sites");
 
@@ -21,52 +23,35 @@ const MOCK_BMU_REF = {
   ok: true,
   json: async () => ({
     data: [
-      {
-        nationalGridBmUnit: "E_MINETY-1",
-        bmUnitType: "S",
-        fuelType: "OTHER",
-        generationCapacity: "50",
-        demandCapacity: "50",
-        bmUnitName: "Minety 1",
-        leadPartyName: "Gresham Power",
-        gspGroupName: "South West",
-      },
-      {
-        nationalGridBmUnit: "E_MINETY-2",
-        bmUnitType: "S",
-        fuelType: "OTHER",
-        generationCapacity: "50",
-        demandCapacity: "50",
-        bmUnitName: "Minety 2",
-        leadPartyName: "Gresham Power",
-        gspGroupName: "South West",
-      },
-      {
-        nationalGridBmUnit: "E_PILGR-1",
-        bmUnitType: "S",
-        fuelType: "OTHER",
-        generationCapacity: "100",
-        demandCapacity: "100",
-        bmUnitName: "Pillswood 1",
-        leadPartyName: "Zenobe",
-        gspGroupName: "North",
-      },
+      { nationalGridBmUnit: "KILSB-1", bmUnitType: "T", fuelType: null, bmUnitName: "T_KILSB-1", generationCapacity: "50", demandCapacity: "-50", leadPartyName: "ZENOBE KILMARNOCK SOUTH LTD", gspGroupName: "South Scotland" },
+      { nationalGridBmUnit: "KILSB-2", bmUnitType: "T", fuelType: null, bmUnitName: "T_KILSB-2", generationCapacity: "50", demandCapacity: "-50", leadPartyName: "ZENOBE KILMARNOCK SOUTH LTD", gspGroupName: "South Scotland" },
+      { nationalGridBmUnit: "PILLB-1", bmUnitType: "E", fuelType: null, bmUnitName: "Pillswood 1 Battery Storage", generationCapacity: "100", demandCapacity: "-100", leadPartyName: "BP Gas Marketing Limited", gspGroupName: "Yorkshire" },
     ],
   }),
 };
 
-function makeBoalfResponse(records: Array<{ bmu: string; level: number; time: string }>) {
+type BoalfSpec = { bmu: string; level: number; from: string; to: string };
+
+function makeBoalfResponse(records: BoalfSpec[]) {
   return {
     ok: true,
     json: async () => ({
-      data: records.map((r) => ({
+      data: records.map((r, i) => ({
         nationalGridBmUnit: r.bmu,
         levelFrom: r.level,
-        timeFrom: r.time,
+        levelTo: r.level,
+        timeFrom: r.from,
+        timeTo: r.to,
+        acceptanceNumber: i + 1,
       })),
     }),
   };
 }
+
+// Windows relative to the real clock, since fetchSitesLive evaluates "now"
+const iso = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
+const ACTIVE = { from: iso(-600_000), to: iso(600_000) };   // in force now
+const EXPIRED = { from: iso(-1_200_000), to: iso(-600_000) }; // ended 10 min ago
 
 describe("fetchSitesLive", () => {
   let fetchSitesLive: SitesModule["fetchSitesLive"];
@@ -79,76 +64,77 @@ describe("fetchSitesLive", () => {
 
   it("groups multiple BMUs from the same site (strip -N suffix) into one entry", async () => {
     mockFetch
-      .mockResolvedValueOnce(
-        makeBoalfResponse([
-          { bmu: "E_MINETY-1", level: 30, time: "2026-05-15T10:00:00Z" },
-          { bmu: "E_MINETY-2", level: 20, time: "2026-05-15T10:00:00Z" },
-        ])
-      )
+      .mockResolvedValueOnce(makeBoalfResponse([
+        { bmu: "KILSB-1", level: 30, ...ACTIVE },
+        { bmu: "KILSB-2", level: 20, ...ACTIVE },
+      ]))
       .mockResolvedValueOnce(MOCK_BMU_REF);
 
     const { sites } = await fetchSitesLive();
-    const minety = sites.find((s) => s.id === "E_MINETY");
-    expect(minety).toBeDefined();
-    expect(minety!.bmUnits).toHaveLength(2);
-    expect(minety!.currentMW).toBe(50);
+    const kils = sites.find((s) => s.id === "KILSB");
+    expect(kils).toBeDefined();
+    expect(kils!.bmUnits).toHaveLength(2);
+    expect(kils!.currentMW).toBe(50);
+    expect(kils!.name).toBe("Kilmarnock South"); // curated name for code-named units
+  });
+
+  it("uses the cleaned bmUnitName when it is human-readable", async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeBoalfResponse([{ bmu: "PILLB-1", level: 10, ...ACTIVE }]))
+      .mockResolvedValueOnce(MOCK_BMU_REF);
+
+    const { sites } = await fetchSitesLive();
+    expect(sites[0].name).toBe("Pillswood Battery Storage");
   });
 
   it("sums capacityMW across all BMUs at a site", async () => {
     mockFetch
-      .mockResolvedValueOnce(
-        makeBoalfResponse([
-          { bmu: "E_MINETY-1", level: 0, time: "2026-05-15T10:00:00Z" },
-          { bmu: "E_MINETY-2", level: 0, time: "2026-05-15T10:00:00Z" },
-        ])
-      )
+      .mockResolvedValueOnce(makeBoalfResponse([
+        { bmu: "KILSB-1", level: 0, ...ACTIVE },
+        { bmu: "KILSB-2", level: 0, ...ACTIVE },
+      ]))
       .mockResolvedValueOnce(MOCK_BMU_REF);
 
     const { sites } = await fetchSitesLive();
-    const minety = sites.find((s) => s.id === "E_MINETY");
-    expect(minety!.capacityMW).toBe(100);
+    expect(sites.find((s) => s.id === "KILSB")!.capacityMW).toBe(100);
   });
 
-  it("uses step-hold: a future dispatch level is not yet applied", async () => {
-    const now = new Date();
-    const past   = new Date(now.getTime() - 60_000).toISOString();
-    const future = new Date(now.getTime() + 60_000).toISOString();
-
+  it("does not apply a future dispatch level yet", async () => {
     mockFetch
-      .mockResolvedValueOnce(
-        makeBoalfResponse([
-          { bmu: "E_PILGR-1", level: 50, time: past },
-          { bmu: "E_PILGR-1", level: 80, time: future },
-        ])
-      )
+      .mockResolvedValueOnce(makeBoalfResponse([
+        { bmu: "PILLB-1", level: 50, ...ACTIVE },
+        { bmu: "PILLB-1", level: 80, from: iso(60_000), to: iso(1_200_000) },
+      ]))
       .mockResolvedValueOnce(MOCK_BMU_REF);
 
     const { sites } = await fetchSitesLive();
-    const pilgr = sites.find((s) => s.id === "E_PILGR");
-    expect(pilgr!.currentMW).toBe(50);
+    expect(sites.find((s) => s.id === "PILLB")!.currentMW).toBe(50);
+  });
+
+  it("reports 0 MW once an acceptance has expired (no hold past timeTo)", async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeBoalfResponse([{ bmu: "PILLB-1", level: 90, ...EXPIRED }]))
+      .mockResolvedValueOnce(MOCK_BMU_REF);
+
+    const { sites } = await fetchSitesLive();
+    expect(sites.find((s) => s.id === "PILLB")!.currentMW).toBe(0);
   });
 
   it("sorts sites by |currentMW| descending", async () => {
     mockFetch
-      .mockResolvedValueOnce(
-        makeBoalfResponse([
-          { bmu: "E_MINETY-1", level: 10, time: "2026-05-15T10:00:00Z" },
-          { bmu: "E_PILGR-1",  level: 90, time: "2026-05-15T10:00:00Z" },
-        ])
-      )
+      .mockResolvedValueOnce(makeBoalfResponse([
+        { bmu: "KILSB-1", level: 10, ...ACTIVE },
+        { bmu: "PILLB-1", level: -90, ...ACTIVE },
+      ]))
       .mockResolvedValueOnce(MOCK_BMU_REF);
 
     const { sites } = await fetchSitesLive();
-    expect(Math.abs(sites[0].currentMW)).toBeGreaterThanOrEqual(Math.abs(sites[1].currentMW));
+    expect(sites[0].id).toBe("PILLB");
   });
 
   it("includes reportingUnits count in meta", async () => {
     mockFetch
-      .mockResolvedValueOnce(
-        makeBoalfResponse([
-          { bmu: "E_MINETY-1", level: 0, time: "2026-05-15T10:00:00Z" },
-        ])
-      )
+      .mockResolvedValueOnce(makeBoalfResponse([{ bmu: "KILSB-1", level: 0, ...ACTIVE }]))
       .mockResolvedValueOnce(MOCK_BMU_REF);
 
     const { meta } = await fetchSitesLive();
@@ -158,16 +144,14 @@ describe("fetchSitesLive", () => {
 
   it("ignores BMUs not in the reference data", async () => {
     mockFetch
-      .mockResolvedValueOnce(
-        makeBoalfResponse([
-          { bmu: "UNKNOWN-BM-UNIT", level: 999, time: "2026-05-15T10:00:00Z" },
-          { bmu: "E_PILGR-1",       level: 50,  time: "2026-05-15T10:00:00Z" },
-        ])
-      )
+      .mockResolvedValueOnce(makeBoalfResponse([
+        { bmu: "UNKNOWN-1", level: 999, ...ACTIVE },
+        { bmu: "PILLB-1",   level: 50,  ...ACTIVE },
+      ]))
       .mockResolvedValueOnce(MOCK_BMU_REF);
 
     const { sites } = await fetchSitesLive();
     expect(sites).toHaveLength(1);
-    expect(sites[0].id).toBe("E_PILGR");
+    expect(sites[0].id).toBe("PILLB");
   });
 });

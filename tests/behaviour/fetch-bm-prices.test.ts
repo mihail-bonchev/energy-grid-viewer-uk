@@ -1,8 +1,10 @@
 /**
  * Behaviour tests for fetchBmPrices.
  * Fetch call order: BMU reference (call #0) then BOD windows in parallel (calls #1..N).
- * jest.isolateModules resets _bessBmuCache (elexon.ts) and _cache (bm-prices.ts) between tests.
+ * jest.isolateModules resets the BMU cache (bmu.ts) and _cache (bm-prices.ts) between tests.
  */
+
+export {};
 
 type BmPricesModule = typeof import("@/lib/bm-prices");
 
@@ -18,8 +20,8 @@ const BMU_REF = {
   ok: true,
   json: async () => ({
     data: [
-      { nationalGridBmUnit: "MINTY-1", bmUnitType: "S", fuelType: "OTHER", generationCapacity: "50", demandCapacity: "50" },
-      { nationalGridBmUnit: "PILBW-1", bmUnitType: "S", fuelType: "OTHER", generationCapacity: "100", demandCapacity: "100" },
+      { nationalGridBmUnit: "MINTY-1", bmUnitType: "T", fuelType: "OTHER", bmUnitName: "Minty BESS", generationCapacity: "50", demandCapacity: "50" },
+      { nationalGridBmUnit: "PILBW-1", bmUnitType: "E", fuelType: null, bmUnitName: "Pilbw Battery Storage", generationCapacity: "100", demandCapacity: "100" },
       { nationalGridBmUnit: "WIND01",  bmUnitType: "G", fuelType: "WIND",  generationCapacity: "200", demandCapacity: "0" },
     ],
   }),

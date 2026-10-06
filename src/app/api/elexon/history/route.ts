@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   }
 
   const site = req.nextUrl.searchParams.get("site");
-  if (site && !/^[A-Z0-9_]{2,12}$/i.test(site)) {
+  if (site && !/^[A-Z0-9_-]{2,16}$/i.test(site)) {
     return NextResponse.json({ error: "Invalid site ID" }, { status: 400 });
   }
 

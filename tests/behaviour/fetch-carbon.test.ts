@@ -3,6 +3,8 @@
  * Verifies parsing logic without hitting the real API.
  */
 
+export {};
+
 type FetchCarbonModule = typeof import("@/lib/carbon");
 
 const mockFetch = jest.fn();
