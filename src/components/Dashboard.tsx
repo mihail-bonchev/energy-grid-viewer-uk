@@ -1144,9 +1144,9 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
               <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 14 }}>Data Sources</div>
               {([
                 ["API", "Elexon Insights Solution", "var(--accent)"],
-                ["Primary", "PN — operator physical notifications", "var(--discharge)"],
-                ["Fallback", "BOALF → FUELINST", "var(--text-mid)"],
-                ["Source", meta.source.toUpperCase(), meta.source === "boalf" || meta.source === "pn" ? "var(--discharge)" : meta.source === "mock" ? "var(--warn)" : "var(--text-mid)"],
+                ["Primary", "PN + BOALF overrides, per unit", "var(--discharge)"],
+                ["Fallback", "BOALF only → FUELINST", "var(--text-mid)"],
+                ["Source", meta.source === "pn" ? "PN + BOALF" : meta.source.toUpperCase(), meta.source === "boalf" || meta.source === "pn" ? "var(--discharge)" : meta.source === "mock" ? "var(--warn)" : "var(--text-mid)"],
                 ["Auth", "None required — public", "var(--discharge)"],
                 ["Scope", "GB transmission-level BESS", "var(--text-mid)"],
                 ["Refresh", "Every 5 minutes", "var(--text-mid)"],
@@ -1170,7 +1170,8 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
               {([
                 ["▲ Green", "Discharging — selling power to grid"],
                 ["▼ Blue", "Charging — absorbing grid power"],
-                ["BOALF", "BM dispatch acceptances, per unit"],
+                ["PN", "Operator plans incl. merchant trading"],
+                ["BOALF", "SO instructions — override PN when active"],
                 ["PS field", "Pumped hydro — negative when pumping"],
                 ["5–9pm", "Evening peak — typical max discharge"],
               ] as [string, string][]).map(([k, v]) => (

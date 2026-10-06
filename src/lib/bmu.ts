@@ -107,17 +107,22 @@ export async function fetchBessUnits(): Promise<BessUnit[]> {
   return units;
 }
 
-// ─── BOALF level reconstruction ──────────────────────────────────────────────
+// ─── PN / BOALF level reconstruction ─────────────────────────────────────────
+// Both datasets are piecewise-linear MW levels per BMU:
+//   PN    — the operator's final physical notification (merchant trading included)
+//   BOALF — System Operator acceptances; levels are absolute MW, so while one is
+//           in force it *replaces* the PN for that unit.
+// Physical estimate per BMU = BOALF level if an acceptance is in force, else PN, else 0.
 
 export interface BoalfRecord {
   timeFrom: string;
   timeTo: string;
   levelFrom: number;
   levelTo: number;
-  acceptanceNumber: number;
+  acceptanceNumber: number; // 0 for PN rows
 }
 
-// Numeric form of a BOALF row — timestamps parsed once, not per slot.
+// Numeric form of a row — timestamps parsed once, not per slot.
 interface Segment { from: number; to: number; levelFrom: number; levelTo: number; acc: number }
 
 function toSegments(recs: BoalfRecord[]): Segment[] {
@@ -133,44 +138,79 @@ function toSegments(recs: BoalfRecord[]): Segment[] {
 }
 
 // Among segments covering `t`, the latest acceptance wins (ties → later start);
-// interpolate linearly along it. No covering segment → 0 MW.
-function levelFromCandidates(cands: Iterable<Segment>, t: number): number {
+// interpolate linearly along it. No covering segment → null.
+function levelFromCandidates(cands: Iterable<Segment>, t: number): number | null {
   let best: Segment | null = null;
   for (const s of cands) {
     if (!(s.from <= t && t < s.to)) continue;
     if (!best || s.acc > best.acc || (s.acc === best.acc && s.from > best.from)) best = s;
   }
-  if (!best) return 0;
+  if (!best) return null;
   return best.levelFrom + (best.levelTo - best.levelFrom) * ((t - best.from) / (best.to - best.from));
+}
+
+// Walks one BMU's sorted segments forward in time, keeping only those in force.
+// `at(t)` must be called with non-decreasing t.
+function sweeper(recs: BoalfRecord[] | undefined) {
+  const segs = recs ? toSegments(recs) : [];
+  let next = 0;
+  let active: Segment[] = [];
+  return (t: number): number | null => {
+    while (next < segs.length && segs[next].from <= t) active.push(segs[next++]);
+    active = active.filter((seg) => seg.to > t);
+    return levelFromCandidates(active, t);
+  };
 }
 
 // BM-instructed level at time `t` (ms). Each BOALF row is a linear segment over
 // [timeFrom, timeTo); where acceptances overlap, the latest acceptance wins.
 // Outside every segment there is no instruction in force → 0 MW.
 export function boalfLevelAt(recs: BoalfRecord[], t: number): number {
-  return levelFromCandidates(toSegments(recs), t);
+  return levelFromCandidates(toSegments(recs), t) ?? 0;
 }
 
-// Fleet/site total per 5-min slot between startMs and endMs (inclusive).
-// Sweeps each BMU's sorted segments once, keeping only those currently in force.
-export function boalfSeries(byBmu: Map<string, BoalfRecord[]>, startMs: number, endMs: number): Array<{ time: string; mw: number }> {
-  const sweeps = [...byBmu.values()].map((recs) => ({ segs: toSegments(recs), next: 0, active: [] as Segment[] }));
+// True if a BOALF acceptance is in force at `t` (even one instructing 0 MW).
+export function boalfActiveAt(recs: BoalfRecord[] | undefined, t: number): boolean {
+  return !!recs && levelFromCandidates(toSegments(recs), t) !== null;
+}
+
+// Physical estimate for one BMU at `t`: BOALF if in force, else PN, else 0.
+export function physicalLevelAt(pn: BoalfRecord[] | undefined, boalf: BoalfRecord[] | undefined, t: number): number {
+  return (boalf && levelFromCandidates(toSegments(boalf), t)) ??
+    (pn && levelFromCandidates(toSegments(pn), t)) ?? 0;
+}
+
+// Fleet/site total of the physical estimate per 5-min slot in [startMs, endMs].
+export function physicalSeries(
+  pnByBmu: Map<string, BoalfRecord[]>,
+  boalfByBmu: Map<string, BoalfRecord[]>,
+  startMs: number,
+  endMs: number,
+): Array<{ time: string; mw: number }> {
+  const ids = new Set([...pnByBmu.keys(), ...boalfByBmu.keys()]);
+  const units = [...ids].map((id) => ({ pn: sweeper(pnByBmu.get(id)), boa: sweeper(boalfByBmu.get(id)) }));
   const out: Array<{ time: string; mw: number }> = [];
   for (let t = startMs; t <= endMs; t += 5 * 60 * 1000) {
     let mw = 0;
-    for (const sw of sweeps) {
-      while (sw.next < sw.segs.length && sw.segs[sw.next].from <= t) sw.active.push(sw.segs[sw.next++]);
-      sw.active = sw.active.filter((seg) => seg.to > t);
-      mw += levelFromCandidates(sw.active, t);
+    for (const u of units) {
+      // Advance both sweeps every slot so neither falls behind
+      const boa = u.boa(t);
+      const pn = u.pn(t);
+      mw += boa ?? pn ?? 0;
     }
     out.push({ time: new Date(t).toISOString(), mw: Math.round(mw) });
   }
   return out;
 }
 
+// BOALF-only series (BM-instructed level, 0 outside acceptances).
+export function boalfSeries(byBmu: Map<string, BoalfRecord[]>, startMs: number, endMs: number): Array<{ time: string; mw: number }> {
+  return physicalSeries(new Map(), byBmu, startMs, endMs);
+}
+
 type RawBoalf = Partial<BoalfRecord> & { nationalGridBmUnit?: string | null; bmUnit?: string | null };
 
-// Normalise raw BOALF rows (nationalGridBmUnit vs bmUnit) and group by BMU,
+// Normalise raw PN/BOALF rows (nationalGridBmUnit vs bmUnit) and group by BMU,
 // keeping only rows for which `keep(bmuId)` is true.
 export function groupBoalf(rows: RawBoalf[], keep: (bmuId: string) => boolean): Map<string, BoalfRecord[]> {
   const byBmu = new Map<string, BoalfRecord[]>();
@@ -188,4 +228,46 @@ export function groupBoalf(rows: RawBoalf[], keep: (bmuId: string) => boolean): 
     });
   }
   return byBmu;
+}
+
+// ─── PN / BOALF fetching ─────────────────────────────────────────────────────
+
+// /stream variants accept long windows when filtered by unit and return a bare
+// array. Filtering to BESS units keeps responses to ~2MB (PN) and ~3.5MB (BOALF).
+async function fetchLevelRows(dataset: "PN" | "BOALF", fromMs: number, toMs: number, ids: string[]): Promise<Map<string, BoalfRecord[]>> {
+  const unitParams = ids.map((id) => `bmUnit=${encodeURIComponent(id)}`).join("&");
+  const res = await fetch(
+    `${ELEXON_BASE}/datasets/${dataset}/stream?from=${new Date(fromMs).toISOString()}&to=${new Date(toMs).toISOString()}&${unitParams}`,
+    { cache: "no-store", headers: { Accept: "application/json" } },
+  );
+  if (!res.ok) throw new Error(`${dataset} ${res.status}`);
+  const json = await res.json();
+  const rows = Array.isArray(json) ? json : json?.data ?? [];
+  const wanted = new Set(ids);
+  return groupBoalf(rows, (id) => wanted.has(id));
+}
+
+export interface PhysicalLevels {
+  pn: Map<string, BoalfRecord[]>;
+  boalf: Map<string, BoalfRecord[]>;
+  source: "pn" | "boalf"; // "pn" = PN with BOALF overrides; "boalf" = BOALF only
+}
+
+// Fetch PN and BOALF for `ids` over [fromMs, toMs]. Either dataset may fail on
+// its own; throws only if neither yields any records.
+export async function fetchPhysicalLevels(fromMs: number, toMs: number, ids: string[]): Promise<PhysicalLevels> {
+  const [pn, boalf] = await Promise.allSettled([
+    fetchLevelRows("PN", fromMs, toMs, ids),
+    fetchLevelRows("BOALF", fromMs, toMs, ids),
+  ]);
+  if (pn.status === "rejected") console.error("[Elexon] PN failed:", pn.reason);
+  if (boalf.status === "rejected") console.error("[Elexon] BOALF failed:", boalf.reason);
+
+  const pnMap = pn.status === "fulfilled" ? pn.value : new Map<string, BoalfRecord[]>();
+  const boalfMap = boalf.status === "fulfilled" ? boalf.value : new Map<string, BoalfRecord[]>();
+  if (!pnMap.size && !boalfMap.size) {
+    const reason = pn.status === "rejected" ? pn.reason : boalf.status === "rejected" ? boalf.reason : null;
+    throw reason ?? new Error("No PN or BOALF records for BESS units");
+  }
+  return { pn: pnMap, boalf: boalfMap, source: pnMap.size ? "pn" : "boalf" };
 }

@@ -1,4 +1,4 @@
-import { isBessUnit, siteIdOf, siteDisplayName, boalfLevelAt, groupBoalf } from "@/lib/bmu";
+import { isBessUnit, siteIdOf, siteDisplayName, boalfLevelAt, boalfActiveAt, physicalLevelAt, physicalSeries, groupBoalf } from "@/lib/bmu";
 import type { BoalfRecord } from "@/lib/bmu";
 
 // ─── isBessUnit ───────────────────────────────────────────────────────────────
@@ -131,5 +131,60 @@ describe("groupBoalf", () => {
   it("drops rows without a time window", () => {
     const g = groupBoalf([{ nationalGridBmUnit: "PILLB-1", timeFrom: "2026-05-15T10:00:00Z", levelFrom: 5 }], () => true);
     expect(g.size).toBe(0);
+  });
+});
+
+// ─── PN + BOALF combination ───────────────────────────────────────────────────
+
+describe("physicalLevelAt", () => {
+  const pn = [rec("17:00", "18:00", 90, 90, 0)];
+
+  it("uses PN when no acceptance is in force", () => {
+    expect(physicalLevelAt(pn, [], T("17:10"))).toBe(90);
+    expect(physicalLevelAt(pn, undefined, T("17:10"))).toBe(90);
+  });
+
+  it("lets an in-force acceptance replace PN — including an instruction to 0 MW", () => {
+    const boa = [rec("17:20", "17:40", 0, 0, 4)];
+    expect(physicalLevelAt(pn, boa, T("17:30"))).toBe(0);
+    expect(physicalLevelAt(pn, boa, T("17:50"))).toBe(90);
+  });
+
+  it("is 0 with neither dataset covering t", () => {
+    expect(physicalLevelAt(pn, [], T("19:00"))).toBe(0);
+    expect(physicalLevelAt(undefined, undefined, T("19:00"))).toBe(0);
+  });
+});
+
+describe("boalfActiveAt", () => {
+  it("is true inside an acceptance even at 0 MW, false outside", () => {
+    const boa = [rec("10:00", "10:30", 0, 0, 1)];
+    expect(boalfActiveAt(boa, T("10:10"))).toBe(true);
+    expect(boalfActiveAt(boa, T("10:30"))).toBe(false);
+    expect(boalfActiveAt(undefined, T("10:10"))).toBe(false);
+  });
+});
+
+describe("physicalSeries", () => {
+  it("matches physicalLevelAt slot by slot across units", () => {
+    const pnMap = new Map([
+      ["A-1", [rec("10:00", "11:00", 50, 50, 0)]],
+      ["B-1", [rec("10:00", "10:30", -20, -20, 0)]],
+    ]);
+    const boaMap = new Map([["A-1", [rec("10:10", "10:20", 5, 5, 2)]]]);
+    const out = physicalSeries(pnMap, boaMap, T("09:55"), T("10:35"));
+    // 09:55 nothing · 10:00–10:05 PN 50-20 · 10:10–10:15 BOA 5-20 · 10:20–10:25 PN 50-20 · 10:30+ PN 50
+    expect(out.map((p) => p.mw)).toEqual([0, 30, 30, -15, -15, 30, 30, 50, 50]);
+    // The sweep must agree with the point-in-time function
+    out.forEach((p) => {
+      const t = Date.parse(p.time);
+      const expected = physicalLevelAt(pnMap.get("A-1"), boaMap.get("A-1"), t) + physicalLevelAt(pnMap.get("B-1"), undefined, t);
+      expect(p.mw).toBe(Math.round(expected));
+    });
+  });
+
+  it("includes units that appear only in BOALF", () => {
+    const out = physicalSeries(new Map(), new Map([["A-1", [rec("10:00", "10:30", 40, 40, 1)]]]), T("10:00"), T("10:00"));
+    expect(out[0].mw).toBe(40);
   });
 });

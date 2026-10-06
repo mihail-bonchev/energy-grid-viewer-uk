@@ -31,7 +31,7 @@ Three layers:
 | Behaviour | Jest + ts-jest | `tests/behaviour/` | Lib functions with `global.fetch` mocked: carbon, prices, sites, storage data fetching |
 | E2E | Playwright | `tests/e2e/` | Full browser flows: page load, overlay toggles, tab navigation |
 
-**Behaviour test note — mock call order matters.** In `fetchSitesLive`, `Promise.all([fetch(BOALF), fetchBmuMeta()])` means BOALF is mock call #1 and BMU ref is call #2. In `fetchBessTimeSeries`, `Promise.all([fetchBessBmuIds(), fetch(BOALF)])` means BMU ref is call #1 and BOALF is call #2. Always match mock order to the source.
+**Behaviour test note — route mocks by URL, not call order.** PN, BOALF, FUELINST and the BMU reference are fetched partly in parallel, so call order is not a stable contract. Use `routeElexon(mockFetch, { bmu, pn, boalf, fuelinst })` and `seg()` from `tests/behaviour/elexon-mock.ts` (pass `"fail"` to simulate an HTTP error). `fetch-bm-prices` and the Octopus/carbon tests still use ordered mocks.
 
 **`jest.isolateModules`** is used in every behaviour test `beforeEach` to reset module-level caches (the BESS unit cache in `bmu.ts`, `_cache` in `bm-prices.ts`) between tests.
 
@@ -48,10 +48,10 @@ Three layers:
 ### Data Flow
 
 ```
-Browser → /api/elexon         → PN → BOALF → FUELINST  (priority fallback chain; /api is an alias)
-Browser → /api/elexon/history → BOALF for a specific past date
+Browser → /api/elexon         → PN+BOALF → BOALF only → FUELINST  (fallback chain; /api is an alias)
+Browser → /api/elexon/history → PN+BOALF for a past London date (optionally one site)
 Browser → /api/units          → data.elexon.co.uk/bmrs/api/v1/reference/bmunits/all
-Browser → /api/sites          → BOALF per-unit live leaderboard
+Browser → /api/sites          → PN+BOALF per-site live leaderboard
 Browser → /api/prices         → Octopus Agile half-hourly p/kWh (Region A)
 Browser → /api/carbon         → api.carbonintensity.org.uk half-hourly gCO₂/kWh
 Browser → /api/bm-prices      → Elexon BOD/stream, one request for the day filtered to BESS units
@@ -64,7 +64,7 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 
 - **`src/app/page.tsx`** — server component; calls `fetchStorageData()` at request time so the page arrives fully rendered
 - **`src/components/Dashboard.tsx`** — client component (`"use client"`); owns tab state, 5-minute auto-refresh, and all interactive state. Four tabs: Live Overview, Live Sites, Fleet Directory, Site Map
-- **`src/components/SitesTab.tsx`** — client component; per-site live leaderboard (~70 sites, ~95 BMUs reporting BOALF on a typical day) ranked by |currentMW|, pulls from `/api/sites`
+- **`src/components/SitesTab.tsx`** — client component; per-site live leaderboard (~105 sites, ~145 BMUs reporting PN on a typical day; "BM" tag = SO acceptance in force) ranked by |currentMW|, pulls from `/api/sites`
 - **`src/components/UnitsTab.tsx`** — client component; fleet directory with search/sort/filter, pulls from `/api/units`
 - **`src/components/UKMap.tsx`** — client component; loaded via `dynamic(..., { ssr: false })` because `react-simple-maps` uses `d3-geo` (ESM-only, breaks SSR)
 
@@ -86,8 +86,8 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 
 `fetchStorageData()` in `src/lib/elexon.ts` tries sources in this order:
 
-1. **PN (Physical Notifications)** — operator-submitted plans per settlement period. Captures both merchant and BM-dispatched operation, so BESS charging (negative MW) is visible. ~30-min resolution.
-2. **BOALF (Bid-Offer Acceptance Level Final)** — System Operator dispatch acceptances only. Near-real-time but only shows BM-instructed charge/discharge; merchant charging is invisible.
+1. **PN with BOALF overrides** (`fetchPhysicalLevels` + `physicalSeries` in `bmu.ts`) — per BMU, the BOALF level while an SO acceptance is in force (BOALF levels are absolute MW, so they *replace* PN), else the operator's Physical Notification, else 0. PN includes merchant trading, so fleet charging/discharging is visible (~±2–3 GW vs ~±0.7 GW from BOALF alone). PN and BOALF are fetched in parallel; either may fail on its own. `source: "pn"`.
+2. **BOALF only** — if PN fails. SO-instructed levels only; merchant activity invisible. `source: "boalf"`.
 3. **FUELINST** — aggregate fleet-level 5-min outturn. Bidirectional for pumped hydro (`PS` field) but BESS (`OTHER` field) is always ≥ 0 — charging not visible.
 
 `pumped` (hydro) always comes from FUELINST `PS` regardless of which BESS source is used, then merged by `mergeFuelInst()`, which forward-fills the latest FUELINST row (FUELINST lags BOALF by a few minutes).
@@ -97,18 +97,18 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 - **FUELINST is long format** — one row per `(startTime, fuelType)`, not wide. `fetchElexonFuelInst()` pivots these.
 - **BESS = `fuelType: "OTHER"`** — bundled with misc generators; never goes negative in FUELINST
 - **PS = pumped hydro** — genuinely bidirectional in FUELINST; negative when pumping
-- **PN/BOALF field names vary** — some Elexon endpoints return `nationalGridBmUnit`, others only `bmUnit`. `fetchBessTimeSeries()` normalises both: `r.nationalGridBmUnit ?? r.bmUnit`
+- **PN/BOALF field names vary** — some Elexon endpoints return `nationalGridBmUnit`, others only `bmUnit`. `groupBoalf()` normalises both: `r.nationalGridBmUnit ?? r.bmUnit` (with the `E_`/`T_` prefix stripped)
 - **BMU reference endpoint returns ~2.2MB** — over the Next.js fetch cache 2MB limit. `fetchBessUnits()` in `src/lib/bmu.ts` is the single module-level cache (1-hour TTL) shared by `elexon.ts`, `sites.ts` and `/api/units`.
 - **BOALF/PN responses** also skip the fetch cache (`cache: "no-store"`) to avoid the same issue
 - **BESS identification** (`isBessUnit()` in `bmu.ts`): bmUnitName matches /batter|bess|storage/i, or NG ID matches the `<site>B-<n>` battery convention (e.g. `PILLB-1`, `KILSB-3`); interconnectors and known generation fuel types excluded. ~155 units. **Do not use `bmUnitType: "S"`** — that means *supplier* BMU (VPPs, aggregators, wind). `fuelType: "OTHER"` alone is also wrong: it includes solar (Cleve Hill) and gas (Thurrock Power), and many real batteries have `fuelType: null`.
 - **`nationalGridBmUnit` has no `E_`/`T_` prefix** (`WHTBB-1`); `elexonBmUnit`/`bmUnit` does (`E_WHTBB-1`). Site ID = NG ID minus trailing `-N`.
 - **BOALF rows are linear segments over `[timeFrom, timeTo)`**, from `levelFrom` to `levelTo`; overlapping acceptances → highest `acceptanceNumber` wins; outside every segment the BM-instructed level is 0. Never hold a level past `timeTo` (`boalfLevelAt()` in `bmu.ts`).
 - **FUELINST has no SOLAR fuel type** — `solar` is always 0 from that source.
-- **`/datasets/PN?from&to` returns 400** (it needs settlementDate+settlementPeriod), so `fetchStorageData()` falls through to BOALF. **`/datasets/PN/stream?from&to` works with no key** (verified 2026-10-06) and is the way to restore PN.
+- **Use the `/stream` variants for PN and BOALF**, filtered with repeated `bmUnit=` params for BESS units: one request per day, bare-array response (~2MB PN, ~3.5MB BOALF). Plain `/datasets/PN?from&to` returns 400 (it needs settlementDate+settlementPeriod).
 - **"Today" is the London day** everywhere (`src/lib/time.ts`): settlement dates, Agile and carbon all start at 23:00Z during BST. Never use `toISOString().split("T")[0]` for a day boundary.
 - **`/datasets/BOD` caps windows at 1 hour**; `/datasets/BOD/stream` takes a whole day when filtered with repeated `bmUnit=` params.
 - **Performance:** BOALF series must parse timestamps once (`boalfSeries` sweeps pre-parsed segments). Re-parsing per 5-min slot took ~80 s for a full day.
-- **`fetchBessTimeSeries(dataset, dateStr?)`** accepts an optional `dateStr` (YYYY-MM-DD). When omitted it defaults to today; when provided it fetches the full day (00:00–23:59Z) and caches the result for 1 hour. Used by `/api/elexon/history`.
+- **`fetchBessSeries(dateStr?, siteId?)`** (in `elexon.ts`) builds every BESS series — today (up to now), a past London day, or one site — so the main chart, yesterday overlay and site history are all PN+BOALF and directly comparable.
 - **Yesterday overlay** in Dashboard merges historical points into today's chart by matching HH:MM substrings (same technique as the pumped-hydro merge). Renders as a dashed white `<Line>` over the `<AreaChart>`.
 
 ## Site Map (`src/components/UKMap.tsx`)
@@ -142,7 +142,8 @@ These were not in the original build but have since been added:
 
 - **Octopus Agile price overlay** (`/api/prices`) — half-hourly p/kWh, colour-coded green→red bars. Toggle in main chart header.
 - **Carbon intensity overlay** (`/api/carbon`) — half-hourly gCO₂eq/kWh, colour-coded by index. Toggle in main chart header.
-- **Live Sites tab** (`/api/sites`, `SitesTab`) — per-site leaderboard ranked by |currentMW|, toggle active-only vs all, sortable.
+- **Live Sites tab** (`/api/sites`, `SitesTab`) — per-site leaderboard ranked by |currentMW|, toggle active-only vs all, sortable. "BM" tag when a System Operator acceptance is in force (`bmInstructed`).
+- **PN as primary source** — PN with BOALF overrides for every BESS series (main chart, yesterday, sites, site history). Merchant charging visible.
 - **Yesterday overlay** (`/api/elexon/history`, Dashboard) — dashed reference line on the main chart showing the same metric from the previous day. Fetched lazily on first toggle.
 - **BM bid/offer prices overlay** (`/api/bm-prices`, `src/lib/bm-prices.ts`) — fleet-average *submitted* (not accepted) bid/offer prices per SP from Elexon BOD/stream. Offer (amber) = discharge price £/MWh; Bid (blue) = charge price. Toggle in main chart header.
 - **Settlement period P&L estimate** (`src/lib/pnl.ts`) — estimated gross revenue per SP: `avgMW × MIP / 2000` (£k), MIP = Elexon Market Index Price £/MWh (`/api/market-price`). Bar chart with running daily total. Toggle in main chart header.
@@ -153,8 +154,7 @@ These were not in the original build but have since been added:
 - **System Price (SSP/SBP)** — Elexon imbalance price per settlement period; much spikier than Agile and the real driver of BM dispatch. Free from Elexon, no key.
 - **Grid frequency overlay** — National Grid ESO publishes live 50 Hz ± deviation; shows FFR/DC service response in real time.
 - **Improve map coordinates** — ~80 transmission-connected BMUs have no GSP group; adding their sites to `SITE_COORDS` in `src/lib/bess-sites.ts` puts them on the map.
-- **Per-site historic view (enhancement)** — the current implementation uses BOALF (BM-dispatched only); a richer view could use `/datasets/PN/stream` (no key needed) to include merchant charging.
-- **Per-site historic view** (`fetchSiteTimeSeries`, `/api/elexon/history?date=&site=`, `SiteHistoryModal`) — History button per site row in Live Sites tab; opens modal with date picker and per-site BOALF charge/discharge chart. No API key needed.
+- **Per-site historic view** (`fetchSiteTimeSeries`, `/api/elexon/history?date=&site=`, `SiteHistoryModal`) — History button per site row in Live Sites tab; opens modal with date picker and per-site PN+BOALF charge/discharge chart. No API key needed.
 
 ## Production Deployment
 

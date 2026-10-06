@@ -202,9 +202,9 @@ function SiteHistoryModal({ site, onClose }: { site: SiteData; onClose: () => vo
             color: TEXT_DIM, fontFamily: "var(--font-mono)", fontSize: 13,
             background: "rgba(255,255,255,0.03)", borderRadius: 8,
           }}>
-            No BM dispatch data for {site.name} on {date}.<br />
+            No PN or BOALF data for {site.name} on {date}.<br />
             <span style={{ fontSize: 11, marginTop: 6, display: "block" }}>
-              This site may not have been BM-dispatched on this date, or merchant charging is not captured by BOALF.
+              The site may not have been registered or reporting on this date.
             </span>
           </div>
         ) : (
@@ -281,7 +281,7 @@ function SiteHistoryModal({ site, onClose }: { site: SiteData; onClose: () => vo
         )}
 
         <div style={{ marginTop: 16, fontSize: 11, color: TEXT_DIM, fontFamily: "var(--font-mono)" }}>
-          Source: Elexon Insights BOALF · BM-dispatched activity only · Merchant charging not visible
+          Source: Elexon PN (operator plans) with BOALF overrides while a System Operator instruction is in force
         </div>
       </div>
     </div>
@@ -476,6 +476,16 @@ export default function SitesTab() {
                 <div style={{ fontWeight: 600, fontSize: 14, color: "white",
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {site.name}
+                  {site.bmInstructed && (
+                    <span
+                      title="A System Operator (Balancing Mechanism) instruction is in force now"
+                      style={{
+                        marginLeft: 6, fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+                        color: "#f59e0b", border: "1px solid rgba(245,158,11,0.5)",
+                        borderRadius: 3, padding: "0 4px", verticalAlign: "middle",
+                      }}
+                    >BM</span>
+                  )}
                 </div>
                 <div style={{ color: TEXT_DIM, fontSize: 11, marginTop: 2,
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -580,7 +590,7 @@ export default function SitesTab() {
         background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.15)",
         borderRadius: 8, fontSize: 11, color: "rgba(251,191,36,0.7)", lineHeight: 1.6,
       }}>
-        Source: Elexon Insights BOALF data · Only sites with BM dispatch acceptances today are shown · Merchant charging may not be visible · Capacities are approximate
+        Source: Elexon PN with BOALF overrides · BM = System Operator instruction in force now · Capacities from Elexon registration data
       </div>
 
       {/* ── Site history modal ─────────────────────────────────────────────── */}

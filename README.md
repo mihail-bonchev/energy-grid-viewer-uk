@@ -7,14 +7,14 @@ Live at [grid.xelantis.com](https://grid.xelantis.com).
 
 ## What it shows
 
-- **Live Overview**: BM-instructed BESS output for today (London day) at 5-minute resolution, plus pumped hydro from FUELINST. Optional overlays:
+- **Live Overview**: BESS fleet output for today (London day) at 5-minute resolution, plus pumped hydro from FUELINST. Optional overlays:
   - Agile price
   - Carbon intensity
   - BM bid/offer prices
   - Estimated P&L at the wholesale Market Index Price
   - Wind
   - Yesterday's curve for comparison
-- **Live Sites**: per-site leaderboard of the instruction in force right now, with a per-site history modal
+- **Live Sites**: per-site leaderboard of current output, with a "BM" tag where a System Operator instruction is in force, and a per-site history modal
 - **Fleet Directory**: about 155 BESS units (about 7.5 GW) from the Elexon unit reference data
 - **Site Map**: sites with town-level coordinates, or a regional centroid where the location is unknown
 
@@ -23,9 +23,9 @@ Positive MW means discharging; negative means charging. The page auto-refreshes 
 ## Architecture
 
 ```
-Browser → /api/elexon          → Elexon BOALF + FUELINST (main series)
-Browser → /api/elexon/history  → Elexon BOALF for a past date, optionally one site
-Browser → /api/sites           → Elexon BOALF, aggregated per site
+Browser → /api/elexon          → Elexon PN + BOALF + FUELINST (main series)
+Browser → /api/elexon/history  → Elexon PN + BOALF for a past date, optionally one site
+Browser → /api/sites           → Elexon PN + BOALF, aggregated per site
 Browser → /api/units           → Elexon /reference/bmunits/all
 Browser → /api/bm-prices       → Elexon BOD/stream (submitted bid/offer prices)
 Browser → /api/market-price    → Elexon market index (APXMIDP)
@@ -39,7 +39,7 @@ The proxy routes avoid CORS problems: every upstream request is made server-side
 
 ## Data notes
 
-- **BOALF shows only what the System Operator instructs** (Balancing Mechanism dispatch), not merchant trading. Each row is a linear segment over `[timeFrom, timeTo)`. When acceptances overlap, the latest one wins. Outside any segment the instructed level is 0.
+- **Output per unit = BOALF if an instruction is in force, otherwise PN.** PN (Physical Notification) is the operator's own plan, including merchant trading. BOALF levels are System Operator instructions in absolute MW, so they replace PN while active. Each row is a linear segment over `[timeFrom, timeTo)`. When acceptances overlap, the latest one wins. If PN is unavailable, the app falls back to BOALF only, which shows SO dispatch but not merchant charging.
 - **BESS identification:** a unit counts as a battery if its name contains battery/BESS/storage, or if its National Grid ID matches the `<site>B-<n>` pattern (`PILLB-1`, `KILSB-3`). `bmUnitType: "S"` means *supplier* unit, not storage.
 - **All "today" windows use the London day.** Settlement days start at 23:00Z during BST.
 - **FUELINST** provides pumped hydro (`PS`) and wind. It has no solar field, and its `OTHER` category never shows battery charging.

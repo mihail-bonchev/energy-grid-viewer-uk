@@ -1,14 +1,11 @@
 /**
  * Behaviour tests for fetchSitesLive.
- * Verifies BOALF → per-site aggregation: BMU grouping, current level = instruction
- * in force now (0 once expired), site deduplication (strip trailing -N), and sorting.
- *
- * Call order in fetchSitesLive — Promise.all([fetch(BOALF), fetchBessUnits()]):
- *   mockFetch call #1 → BOALF response
- *   mockFetch call #2 → BMU reference response
+ * Verifies per-site aggregation of the physical estimate now (BOALF if in force,
+ * else PN), the BM-instructed flag, site deduplication (strip trailing -N), sorting,
+ * and BOALF-only fallback. Fetches are URL-routed (see elexon-mock.ts).
  */
 
-export {};
+import { routeElexon, seg, BMU_REF } from "./elexon-mock";
 
 type SitesModule = typeof import("@/lib/sites");
 
@@ -19,39 +16,13 @@ beforeEach(() => {
   mockFetch.mockReset();
 });
 
-const MOCK_BMU_REF = {
-  ok: true,
-  json: async () => ({
-    data: [
-      { nationalGridBmUnit: "KILSB-1", bmUnitType: "T", fuelType: null, bmUnitName: "T_KILSB-1", generationCapacity: "50", demandCapacity: "-50", leadPartyName: "ZENOBE KILMARNOCK SOUTH LTD", gspGroupName: "South Scotland" },
-      { nationalGridBmUnit: "KILSB-2", bmUnitType: "T", fuelType: null, bmUnitName: "T_KILSB-2", generationCapacity: "50", demandCapacity: "-50", leadPartyName: "ZENOBE KILMARNOCK SOUTH LTD", gspGroupName: "South Scotland" },
-      { nationalGridBmUnit: "PILLB-1", bmUnitType: "E", fuelType: null, bmUnitName: "Pillswood 1 Battery Storage", generationCapacity: "100", demandCapacity: "-100", leadPartyName: "BP Gas Marketing Limited", gspGroupName: "Yorkshire" },
-    ],
-  }),
-};
-
-type BoalfSpec = { bmu: string; level: number; from: string; to: string };
-
-function makeBoalfResponse(records: BoalfSpec[]) {
-  return {
-    ok: true,
-    json: async () => ({
-      data: records.map((r, i) => ({
-        nationalGridBmUnit: r.bmu,
-        levelFrom: r.level,
-        levelTo: r.level,
-        timeFrom: r.from,
-        timeTo: r.to,
-        acceptanceNumber: i + 1,
-      })),
-    }),
-  };
-}
-
 // Windows relative to the real clock, since fetchSitesLive evaluates "now"
 const iso = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
-const ACTIVE = { from: iso(-600_000), to: iso(600_000) };   // in force now
+const ACTIVE = { from: iso(-600_000), to: iso(600_000) };     // in force now
 const EXPIRED = { from: iso(-1_200_000), to: iso(-600_000) }; // ended 10 min ago
+
+const pnNow = (bmu: string, level: number) => seg(bmu, level, ACTIVE.from, { to: ACTIVE.to });
+const boaNow = (bmu: string, level: number, acc = 1) => seg(bmu, level, ACTIVE.from, { to: ACTIVE.to, acc });
 
 describe("fetchSitesLive", () => {
   let fetchSitesLive: SitesModule["fetchSitesLive"];
@@ -63,95 +34,74 @@ describe("fetchSitesLive", () => {
   });
 
   it("groups multiple BMUs from the same site (strip -N suffix) into one entry", async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeBoalfResponse([
-        { bmu: "KILSB-1", level: 30, ...ACTIVE },
-        { bmu: "KILSB-2", level: 20, ...ACTIVE },
-      ]))
-      .mockResolvedValueOnce(MOCK_BMU_REF);
-
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: [pnNow("KILSB-1", 30), pnNow("KILSB-2", 20)] });
     const { sites } = await fetchSitesLive();
-    const kils = sites.find((s) => s.id === "KILSB");
-    expect(kils).toBeDefined();
-    expect(kils!.bmUnits).toHaveLength(2);
-    expect(kils!.currentMW).toBe(50);
-    expect(kils!.name).toBe("Kilmarnock South"); // curated name for code-named units
+    const kils = sites.find((s) => s.id === "KILSB")!;
+    expect(kils.bmUnits).toEqual(["KILSB-1", "KILSB-2"]);
+    expect(kils.currentMW).toBe(50);
+    expect(kils.name).toBe("Kilmarnock South");
+    expect(kils.capacityMW).toBe(100);
   });
 
-  it("uses the cleaned bmUnitName when it is human-readable", async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeBoalfResponse([{ bmu: "PILLB-1", level: 10, ...ACTIVE }]))
-      .mockResolvedValueOnce(MOCK_BMU_REF);
-
-    const { sites } = await fetchSitesLive();
-    expect(sites[0].name).toBe("Pillswood Battery Storage");
+  it("includes PN-only sites (merchant activity, no SO instruction)", async () => {
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: [pnNow("PILLB-1", -40)], boalf: [] });
+    const { sites, meta } = await fetchSitesLive();
+    expect(sites[0]).toMatchObject({ id: "PILLB", currentMW: -40, bmInstructed: false, name: "Pillswood Battery Storage" });
+    expect(meta.source).toBe("pn+boalf");
   });
 
-  it("sums capacityMW across all BMUs at a site", async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeBoalfResponse([
-        { bmu: "KILSB-1", level: 0, ...ACTIVE },
-        { bmu: "KILSB-2", level: 0, ...ACTIVE },
-      ]))
-      .mockResolvedValueOnce(MOCK_BMU_REF);
-
+  it("uses the BOALF level while an acceptance is in force and flags the site", async () => {
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: [pnNow("PILLB-1", 90)], boalf: [boaNow("PILLB-1", 0)] });
     const { sites } = await fetchSitesLive();
-    expect(sites.find((s) => s.id === "KILSB")!.capacityMW).toBe(100);
+    expect(sites[0]).toMatchObject({ id: "PILLB", currentMW: 0, bmInstructed: true }); // instructed to 0 still counts
   });
 
-  it("does not apply a future dispatch level yet", async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeBoalfResponse([
-        { bmu: "PILLB-1", level: 50, ...ACTIVE },
-        { bmu: "PILLB-1", level: 80, from: iso(60_000), to: iso(1_200_000) },
-      ]))
-      .mockResolvedValueOnce(MOCK_BMU_REF);
-
+  it("reverts to PN once the acceptance has expired", async () => {
+    routeElexon(mockFetch, {
+      bmu: BMU_REF,
+      pn: [pnNow("PILLB-1", 90)],
+      boalf: [seg("PILLB-1", -50, EXPIRED.from, { to: EXPIRED.to, acc: 1 })],
+    });
     const { sites } = await fetchSitesLive();
-    expect(sites.find((s) => s.id === "PILLB")!.currentMW).toBe(50);
+    expect(sites[0]).toMatchObject({ currentMW: 90, bmInstructed: false });
   });
 
-  it("reports 0 MW once an acceptance has expired (no hold past timeTo)", async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeBoalfResponse([{ bmu: "PILLB-1", level: 90, ...EXPIRED }]))
-      .mockResolvedValueOnce(MOCK_BMU_REF);
-
+  it("does not apply a future level yet", async () => {
+    routeElexon(mockFetch, {
+      bmu: BMU_REF,
+      pn: [pnNow("PILLB-1", 50), seg("PILLB-1", 80, iso(600_000), { to: iso(1_800_000) })],
+    });
     const { sites } = await fetchSitesLive();
-    expect(sites.find((s) => s.id === "PILLB")!.currentMW).toBe(0);
+    expect(sites[0].currentMW).toBe(50);
   });
 
-  it("sorts sites by |currentMW| descending", async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeBoalfResponse([
-        { bmu: "KILSB-1", level: 10, ...ACTIVE },
-        { bmu: "PILLB-1", level: -90, ...ACTIVE },
-      ]))
-      .mockResolvedValueOnce(MOCK_BMU_REF);
-
-    const { sites } = await fetchSitesLive();
-    expect(sites[0].id).toBe("PILLB");
-  });
-
-  it("includes reportingUnits count in meta", async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeBoalfResponse([{ bmu: "KILSB-1", level: 0, ...ACTIVE }]))
-      .mockResolvedValueOnce(MOCK_BMU_REF);
-
-    const { meta } = await fetchSitesLive();
-    expect(meta.reportingUnits).toBe(1);
+  it("falls back to BOALF only when PN fails", async () => {
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: "fail", boalf: [boaNow("PILLB-1", 70)] });
+    const { sites, meta } = await fetchSitesLive();
+    expect(sites[0].currentMW).toBe(70);
     expect(meta.source).toBe("boalf");
   });
 
-  it("ignores BMUs not in the reference data", async () => {
-    mockFetch
-      .mockResolvedValueOnce(makeBoalfResponse([
-        { bmu: "UNKNOWN-1", level: 999, ...ACTIVE },
-        { bmu: "PILLB-1",   level: 50,  ...ACTIVE },
-      ]))
-      .mockResolvedValueOnce(MOCK_BMU_REF);
-
+  it("sorts sites by |currentMW| descending", async () => {
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: [pnNow("KILSB-1", 10), pnNow("PILLB-1", -90)] });
     const { sites } = await fetchSitesLive();
-    expect(sites).toHaveLength(1);
-    expect(sites[0].id).toBe("PILLB");
+    expect(sites.map((s) => s.id)).toEqual(["PILLB", "KILSB"]);
+  });
+
+  it("counts BMUs reporting in either dataset", async () => {
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: [pnNow("KILSB-1", 0)], boalf: [boaNow("PILLB-1", 5)] });
+    const { meta } = await fetchSitesLive();
+    expect(meta.reportingUnits).toBe(2);
+  });
+
+  it("ignores rows for units outside the BESS list", async () => {
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: [pnNow("CLVHS-1", 999), pnNow("PILLB-1", 50)] });
+    const { sites } = await fetchSitesLive();
+    expect(sites.map((s) => s.id)).toEqual(["PILLB"]);
+  });
+
+  it("throws when both PN and BOALF fail", async () => {
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: "fail", boalf: "fail" });
+    await expect(fetchSitesLive()).rejects.toThrow();
   });
 });

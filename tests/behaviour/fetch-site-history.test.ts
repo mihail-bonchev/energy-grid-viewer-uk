@@ -1,10 +1,10 @@
 /**
  * Behaviour tests for fetchSiteTimeSeries.
- * Verifies: site ID filtering, 5-min slot-building, acceptance windows, multi-BMU
- * aggregation, and empty-array returns for no-match / error cases.
+ * Verifies: requests only the site's BMUs, 5-min slot-building, PN with BOALF
+ * overrides, multi-BMU aggregation, and empty/error cases. URL-routed fetches.
  */
 
-export {};
+import { routeElexon, seg, BMU_REF } from "./elexon-mock";
 
 type ElexonModule = typeof import("@/lib/elexon");
 
@@ -15,21 +15,8 @@ beforeEach(() => {
   mockFetch.mockReset();
 });
 
-function makeBoalfResponse(records: Array<{ bmu: string; level: number; time: string; to?: string }>) {
-  return {
-    ok: true,
-    json: async () => ({
-      data: records.map((r) => ({
-        nationalGridBmUnit: r.bmu,
-        levelFrom: r.level,
-        levelTo: r.level,
-        timeFrom: r.time,
-        timeTo: r.to ?? new Date(Date.parse(r.time) + 3_600_000).toISOString(),
-        acceptanceNumber: 1,
-      })),
-    }),
-  };
-}
+const at = (result: Array<{ time: string; battery: number }>, hhmm: string) =>
+  result.find((p) => p.time.startsWith(`2026-05-15T${hhmm}`));
 
 describe("fetchSiteTimeSeries", () => {
   let fetchSiteTimeSeries: ElexonModule["fetchSiteTimeSeries"];
@@ -41,19 +28,12 @@ describe("fetchSiteTimeSeries", () => {
   });
 
   it("returns 288 data points for a full day (5-min slots × 24h)", async () => {
-    mockFetch.mockResolvedValueOnce(makeBoalfResponse([
-      { bmu: "KILSB-1", level: 50, time: "2026-05-15T00:00:00Z" },
-    ]));
-
-    const result = await fetchSiteTimeSeries("2026-05-15", "KILSB");
-    expect(result).toHaveLength(288);
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: [seg("KILSB-1", 50, "2026-05-15T00:00:00Z")] });
+    expect(await fetchSiteTimeSeries("2026-05-15", "KILSB")).toHaveLength(288);
   });
 
   it("each point has time, battery, pumped, total fields", async () => {
-    mockFetch.mockResolvedValueOnce(makeBoalfResponse([
-      { bmu: "KILSB-1", level: 100, time: "2026-05-15T06:00:00Z" },
-    ]));
-
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: [seg("KILSB-1", 100, "2026-05-15T06:00:00Z")] });
     const result = await fetchSiteTimeSeries("2026-05-15", "KILSB");
     expect(result[0]).toMatchObject({
       time: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
@@ -63,62 +43,51 @@ describe("fetchSiteTimeSeries", () => {
     });
   });
 
-  it("filters by site prefix: only includes BMUs matching the site ID", async () => {
-    mockFetch.mockResolvedValueOnce(makeBoalfResponse([
-      { bmu: "KILSB-1", level: 80,  time: "2026-05-15T10:00:00Z" },
-      { bmu: "PILLB-1",  level: 999, time: "2026-05-15T10:00:00Z" }, // different site — excluded
-    ]));
-
-    const result = await fetchSiteTimeSeries("2026-05-15", "KILSB");
-    const slotAt10 = result.find((p) => p.time.startsWith("2026-05-15T10:00"));
-    expect(slotAt10?.battery).toBe(80); // PILLB-1 not counted
+  it("requests only the site's BMUs", async () => {
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: [seg("KILSB-1", 1, "2026-05-15T10:00:00Z")] });
+    await fetchSiteTimeSeries("2026-05-15", "KILSB");
+    const pnUrl = mockFetch.mock.calls.map((c) => String(c[0])).find((u) => u.includes("/PN/stream"))!;
+    expect(pnUrl).toContain("bmUnit=KILSB-1");
+    expect(pnUrl).toContain("bmUnit=KILSB-2");
+    expect(pnUrl).not.toContain("PILLB-1");
   });
 
   it("aggregates multiple BMUs from the same site", async () => {
-    mockFetch.mockResolvedValueOnce(makeBoalfResponse([
-      { bmu: "KILSB-1", level: 50, time: "2026-05-15T10:00:00Z" },
-      { bmu: "KILSB-2", level: 75, time: "2026-05-15T10:00:00Z" },
-    ]));
-
+    routeElexon(mockFetch, {
+      bmu: BMU_REF,
+      pn: [seg("KILSB-1", 50, "2026-05-15T10:00:00Z"), seg("KILSB-2", 75, "2026-05-15T10:00:00Z")],
+    });
     const result = await fetchSiteTimeSeries("2026-05-15", "KILSB");
-    const slotAt10 = result.find((p) => p.time.startsWith("2026-05-15T10:00"));
-    expect(slotAt10?.battery).toBe(125); // 50 + 75
+    expect(at(result, "10:00")?.battery).toBe(125);
   });
 
-  it("holds a level only within its acceptance window", async () => {
-    mockFetch.mockResolvedValueOnce(makeBoalfResponse([
-      { bmu: "KILSB-1", level: 100, time: "2026-05-15T10:00:00Z", to: "2026-05-15T10:30:00Z" },
-    ]));
-
+  it("applies BOALF overrides over PN within the acceptance window", async () => {
+    routeElexon(mockFetch, {
+      bmu: BMU_REF,
+      pn: [seg("KILSB-1", 100, "2026-05-15T10:00:00Z", { to: "2026-05-15T11:00:00Z" })],
+      boalf: [seg("KILSB-1", 20, "2026-05-15T10:20:00Z", { to: "2026-05-15T10:40:00Z", acc: 3 })],
+    });
     const result = await fetchSiteTimeSeries("2026-05-15", "KILSB");
-    const slotAt1025 = result.find((p) => p.time.startsWith("2026-05-15T10:25"));
-    const slotAt11 = result.find((p) => p.time.startsWith("2026-05-15T11:00"));
-    expect(slotAt1025?.battery).toBe(100);
-    expect(slotAt11?.battery).toBe(0); // expired at 10:30 — not held
-  });
-
-  it("returns empty array when no records match the site prefix", async () => {
-    mockFetch.mockResolvedValueOnce(makeBoalfResponse([
-      { bmu: "PILLB-1", level: 200, time: "2026-05-15T10:00:00Z" },
-    ]));
-
-    const result = await fetchSiteTimeSeries("2026-05-15", "KILSB");
-    expect(result).toEqual([]);
-  });
-
-  it("returns empty array when BOALF fetch fails", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 503, statusText: "Service Unavailable" });
-
-    await expect(fetchSiteTimeSeries("2026-05-15", "KILSB")).rejects.toThrow("BOALF 503");
+    expect(at(result, "10:10")?.battery).toBe(100);
+    expect(at(result, "10:30")?.battery).toBe(20);
+    expect(at(result, "10:50")?.battery).toBe(100);
+    expect(at(result, "11:00")?.battery).toBe(0); // PN window over
   });
 
   it("handles negative MW (charging) correctly", async () => {
-    mockFetch.mockResolvedValueOnce(makeBoalfResponse([
-      { bmu: "KILSB-1", level: -300, time: "2026-05-15T02:00:00Z" },
-    ]));
-
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: [seg("KILSB-1", -300, "2026-05-15T02:00:00Z")] });
     const result = await fetchSiteTimeSeries("2026-05-15", "KILSB");
-    const slotAt2 = result.find((p) => p.time.startsWith("2026-05-15T02:00"));
-    expect(slotAt2?.battery).toBe(-300);
+    expect(at(result, "02:00")?.battery).toBe(-300);
+  });
+
+  it("returns empty array for a site not in the BESS list", async () => {
+    routeElexon(mockFetch, { bmu: BMU_REF });
+    expect(await fetchSiteTimeSeries("2026-05-15", "NOPEB")).toEqual([]);
+    expect(mockFetch.mock.calls.some((c) => String(c[0]).includes("/stream"))).toBe(false);
+  });
+
+  it("throws when both PN and BOALF fail", async () => {
+    routeElexon(mockFetch, { bmu: BMU_REF, pn: "fail", boalf: "fail" });
+    await expect(fetchSiteTimeSeries("2026-05-15", "KILSB")).rejects.toThrow("PN 503");
   });
 });
