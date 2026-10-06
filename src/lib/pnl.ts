@@ -2,14 +2,17 @@ export interface PnlPoint {
   time: string   // "HH:MM" (30-min bucket start, London time)
   pnl: number    // £k — positive = revenue (discharging), negative = cost (charging)
   avgMW: number  // average MW for the 30-min period
-  price: number  // Agile p/kWh used for calculation
+  price: number  // wholesale Market Index Price £/MWh used for calculation
 }
 
 /**
  * Computes estimated P&L per 30-min settlement period.
  *
- * Formula: P&L (£k) = avgMW × 0.5h × (price p/kWh × 10 £/MWh) / 1000
- *                   = avgMW × price / 200
+ * Formula: P&L (£k) = avgMW × 0.5h × price (£/MWh) / 1000
+ *                   = avgMW × price / 2000
+ *
+ * Prices are the Elexon Market Index Price (wholesale day-ahead/within-day),
+ * not a retail tariff — that is what a battery actually trades at.
  *
  * Both inputs use "HH:MM" London-local time. The caller is responsible for
  * converting BESS ISO timestamps to London HH:MM before calling this.
@@ -35,7 +38,7 @@ export function computePnl(
     if (!mwVals?.length) continue;
     const avgMW = mwVals.reduce((a, b) => a + b, 0) / mwVals.length;
     // Round to 1 decimal place in £k
-    const pnl = Math.round((avgMW * price) / 200 * 10) / 10;
+    const pnl = Math.round((avgMW * price) / 2000 * 10) / 10;
     result.push({ time, pnl, avgMW: Math.round(avgMW), price });
   }
   return result;

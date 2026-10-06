@@ -1,4 +1,5 @@
 import { fetchBessUnits, groupBoalf, boalfSeries, siteIdOf } from "./bmu";
+import { londonDateStr, londonDayBounds } from "./time";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,7 +37,7 @@ export interface StorageDataPoint {
 export interface ApiResponse {
   data: StorageDataPoint[];
   meta: {
-    source: "boalf" | "fuelinst" | "mock";
+    source: "pn" | "boalf" | "fuelinst" | "mock";
     lastUpdated: string;
     count: number;
   };
@@ -126,8 +127,7 @@ interface FuelInstLongRecord {
 }
 
 export async function fetchElexonFuelInst(): Promise<StorageDataPoint[]> {
-  const now = new Date();
-  const todayStr = now.toISOString().split("T")[0];
+  const todayStr = londonDateStr();
 
   const url = `${ELEXON_BASE}/datasets/FUELINST?settlementDateFrom=${todayStr}&settlementDateTo=${todayStr}&format=json`;
 
@@ -189,14 +189,16 @@ export async function fetchBessBmuIds(): Promise<Set<string>> {
   return new Set((await fetchBessUnits()).map((u) => u.id));
 }
 
-// Shared builder: fetches `dataset` (PN or BOALF) for a given date (defaults to today),
+// Shared builder: fetches `dataset` (PN or BOALF) for a London day (defaults to today),
 // filters to BESS BMUs, and produces a 5-min fleet-level time series.
 async function fetchBessTimeSeries(dataset: "PN" | "BOALF", dateStr?: string): Promise<StorageDataPoint[]> {
   const now = new Date();
-  const targetDate = dateStr ?? now.toISOString().split("T")[0];
-  const isToday = targetDate === now.toISOString().split("T")[0];
-  const from = `${targetDate}T00:00Z`;
-  const to = isToday ? now.toISOString() : `${targetDate}T23:59:59Z`;
+  const targetDate = dateStr ?? londonDateStr(now);
+  const [dayStart, dayEnd] = londonDayBounds(targetDate);
+  const startMs = dayStart;
+  const endMs = Math.min(now.getTime(), dayEnd - 1);
+  const from = new Date(startMs).toISOString();
+  const to = new Date(endMs).toISOString();
 
   const [bessBmus, res] = await Promise.all([
     fetchBessBmuIds(),
@@ -215,16 +217,15 @@ async function fetchBessTimeSeries(dataset: "PN" | "BOALF", dateStr?: string): P
 
   console.log(`[${dataset}] ${[...byBmu.values()].reduce((n, r) => n + r.length, 0)} records across ${byBmu.size} BESS BMUs`);
 
-  const startMs = new Date(`${targetDate}T00:00:00Z`).getTime();
-  const endMs = isToday ? now.getTime() : new Date(`${targetDate}T23:59:59Z`).getTime();
-
   return boalfSeries(byBmu, startMs, endMs).map(({ time, mw }) => ({ time, battery: mw, pumped: 0, total: mw }));
 }
 
 // Fetch a single site's BOALF time series for a given date. Filters by site ID (BMU minus "-N").
 export async function fetchSiteTimeSeries(dateStr: string, siteId: string): Promise<StorageDataPoint[]> {
-  const from = `${dateStr}T00:00Z`;
-  const to   = `${dateStr}T23:59:59Z`;
+  const [startMs, dayEnd] = londonDayBounds(dateStr);
+  const endMs = Math.min(Date.now(), dayEnd - 1);
+  const from = new Date(startMs).toISOString();
+  const to   = new Date(endMs).toISOString();
 
   const res = await fetch(`${ELEXON_BASE}/datasets/BOALF?from=${from}&to=${to}&format=json`, {
     cache: "no-store",
@@ -236,13 +237,10 @@ export async function fetchSiteTimeSeries(dateStr: string, siteId: string): Prom
   const byBmu = groupBoalf(json?.data ?? [], (id) => siteIdOf(id) === siteId);
   if (!byBmu.size) return [];
 
-  const startMs = new Date(`${dateStr}T00:00:00Z`).getTime();
-  const endMs   = new Date(`${dateStr}T23:59:59Z`).getTime();
-
   return boalfSeries(byBmu, startMs, endMs).map(({ time, mw }) => ({ time, battery: mw, pumped: 0, total: mw }));
 }
 
-// Fetch BESS data for a specific historical date (YYYY-MM-DD). Uses BOALF only.
+// Fetch BESS data for a specific London date (YYYY-MM-DD). Uses BOALF only.
 export async function fetchStorageDataForDate(dateStr: string): Promise<StorageDataPoint[]> {
   try {
     return await fetchBessTimeSeries("BOALF", dateStr);
@@ -267,7 +265,7 @@ export function mergeFuelInst(bmPoints: StorageDataPoint[], fuelInst: StorageDat
 }
 
 // Priority: PN (operator plans, best charging signal) → BOALF (SO dispatch) → FUELINST (aggregate, no BESS charging)
-export async function fetchStorageData(): Promise<{ data: StorageDataPoint[]; source: "boalf" | "fuelinst" | "mock" }> {
+export async function fetchStorageData(): Promise<{ data: StorageDataPoint[]; source: ApiResponse["meta"]["source"] }> {
   let fuelInstPoints: StorageDataPoint[] | null = null;
 
   // Try PN first — captures both merchant and BM-dispatched operator intentions
@@ -277,7 +275,7 @@ export async function fetchStorageData(): Promise<{ data: StorageDataPoint[]; so
       fetchElexonFuelInst(),
     ]);
     fuelInstPoints = fuelInst;
-    return { data: mergeFuelInst(pnPoints, fuelInst), source: "boalf" };
+    return { data: mergeFuelInst(pnPoints, fuelInst), source: "pn" };
   } catch (pnErr) {
     console.error("[Elexon] PN failed, trying BOALF:", pnErr);
   }

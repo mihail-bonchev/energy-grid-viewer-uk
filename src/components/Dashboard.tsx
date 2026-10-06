@@ -11,6 +11,7 @@ import type { ApiResponse, StorageDataPoint } from "@/lib/elexon";
 import type { PricePoint } from "@/lib/prices";
 import type { CarbonPoint } from "@/lib/carbon";
 import type { BmPricePoint } from "@/lib/bm-prices";
+import type { MarketPricePoint } from "@/lib/market-price";
 import { computePnl } from "@/lib/pnl";
 import type { PnlPoint } from "@/lib/pnl";
 import UnitsTab from "@/components/UnitsTab";
@@ -18,6 +19,7 @@ import SitesTab from "@/components/SitesTab";
 
 const UKMap = dynamic(() => import("@/components/UKMap"), { ssr: false });
 import { fmtMW, fmtTime, getStatus } from "@/lib/elexon";
+import { londonDateStr, previousLondonDate } from "@/lib/time";
 
 const REFRESH_MS = 300_000; // 5 minutes
 type MainTab = "overview" | "units" | "map" | "sites";
@@ -243,7 +245,7 @@ function PnlTooltip({ active, payload, label }: {
           <span>avg MW</span><span style={{ color: "var(--text-mid)" }}>{entry.avgMW.toLocaleString()} MW</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: "var(--text-dim)", fontSize: 10 }}>
-          <span>Agile price</span><span style={{ color: "var(--text-mid)" }}>{entry.price.toFixed(2)} p/kWh</span>
+          <span>Market price</span><span style={{ color: "var(--text-mid)" }}>£{entry.price.toFixed(2)}/MWh</span>
         </div>
       </div>
     </div>
@@ -318,6 +320,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   const [carbonData, setCarbonData] = useState<CarbonPoint[]>([]);
   const [yesterdayData, setYesterdayData] = useState<StorageDataPoint[]>([]);
   const [bmPricesData, setBmPricesData] = useState<BmPricePoint[]>([]);
+  const [marketPriceData, setMarketPriceData] = useState<MarketPricePoint[]>([]);
   const [showPrices, setShowPrices] = useState(false);
   const [showCarbon, setShowCarbon] = useState(false);
   const [showYesterday, setShowYesterday] = useState(false);
@@ -331,7 +334,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const res = await fetch("/api", { cache: "no-store" });
+      const res = await fetch("/api/elexon", { cache: "no-store" });
       const json: ApiResponse = await res.json();
       setApiData(json);
     } catch (err) {
@@ -372,13 +375,21 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
     }
   }, []);
 
+  const fetchMarketPrice = useCallback(async () => {
+    try {
+      const res = await fetch("/api/market-price", { cache: "no-store" });
+      const json = await res.json();
+      if (json.data) setMarketPriceData(json.data);
+    } catch (err) {
+      console.error("Market price fetch failed", err);
+    }
+  }, []);
+
   const fetchYesterday = useCallback(async () => {
     if (yesterdayFetchedRef.current) return;
     yesterdayFetchedRef.current = true;
     try {
-      const d = new Date();
-      d.setUTCDate(d.getUTCDate() - 1);
-      const dateStr = d.toISOString().split("T")[0];
+      const dateStr = previousLondonDate(londonDateStr());
       const res = await fetch(`/api/elexon/history?date=${dateStr}`, { cache: "no-store" });
       const json = await res.json();
       if (json.data?.length) setYesterdayData(json.data);
@@ -399,6 +410,11 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
     };
   }, [refresh, fetchPrices, fetchCarbon, fetchBmPrices]);
 
+  // Market prices drive the P&L panel; fetched while it is open, refreshed with the main data
+  useEffect(() => {
+    if (showPnl) fetchMarketPrice();
+  }, [showPnl, apiData, fetchMarketPrice]);
+
   const { data, meta } = apiData;
   const latest = data[data.length - 1];
   const currentMW = latest?.[selectedView] ?? 0;
@@ -418,15 +434,15 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
   }, [data, yesterdayData, selectedView, showYesterday]);
 
   const pnlData = useMemo<PnlPoint[]>(() => {
-    if (!showPnl || !priceData.length || !data.length) return [];
+    if (!showPnl || !marketPriceData.length || !data.length) return [];
     const bessPoints = data.map((p) => ({
       time: new Date(p.time).toLocaleTimeString("en-GB", {
         hour: "2-digit", minute: "2-digit", timeZone: "Europe/London",
       }),
       mw: p[selectedView],
     }));
-    return computePnl(bessPoints, priceData);
-  }, [data, priceData, selectedView, showPnl]);
+    return computePnl(bessPoints, marketPriceData);
+  }, [data, marketPriceData, selectedView, showPnl]);
 
   const todayMax = data.length ? Math.max(...data.map((d) => d.battery)) : 0;
   const todayMin = data.length ? Math.min(...data.map((d) => d.battery)) : 0;
@@ -959,7 +975,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                     Estimated Revenue — Today · {viewKeys.find((v) => v.key === selectedView)?.label}
                   </div>
                   <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 3 }}>
-                    MW output × Agile half-hourly price (Region A) · £k per settlement period · gross estimate only
+                    MW output × Elexon Market Index Price · £k per settlement period · gross estimate only
                   </div>
                 </div>
                 {pnlData.length > 0 && (
@@ -976,10 +992,8 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                 )}
               </div>
 
-              {!priceData.length ? (
-                <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>
-                  Enable Prices overlay first to see P&amp;L (prices not yet loaded)
-                </div>
+              {!marketPriceData.length ? (
+                <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>Loading market prices…</div>
               ) : pnlData.length === 0 ? (
                 <div style={{ color: "var(--text-dim)", fontSize: 12, padding: "20px 0" }}>Loading…</div>
               ) : (
@@ -1013,7 +1027,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                     </BarChart>
                   </ResponsiveContainer>
                   <div style={{ color: "var(--text-dim)", fontSize: 10, marginTop: 8 }}>
-                    Gross estimate only — uses Agile Region A retail price as proxy. Ignores BM dispatch, imbalance, ancillary, and capacity revenues.
+                    Gross estimate only — values output at the wholesale Market Index Price (APX). Ignores BM bid/offer prices, imbalance, ancillary and capacity revenues.
                   </div>
                 </>
               )}
@@ -1132,7 +1146,7 @@ export default function Dashboard({ initialData }: { initialData: ApiResponse })
                 ["API", "Elexon Insights Solution", "var(--accent)"],
                 ["Primary", "PN — operator physical notifications", "var(--discharge)"],
                 ["Fallback", "BOALF → FUELINST", "var(--text-mid)"],
-                ["Source", meta.source.toUpperCase(), meta.source === "boalf" ? "var(--discharge)" : meta.source === "mock" ? "var(--warn)" : "var(--text-mid)"],
+                ["Source", meta.source.toUpperCase(), meta.source === "boalf" || meta.source === "pn" ? "var(--discharge)" : meta.source === "mock" ? "var(--warn)" : "var(--text-mid)"],
                 ["Auth", "None required — public", "var(--discharge)"],
                 ["Scope", "GB transmission-level BESS", "var(--text-mid)"],
                 ["Refresh", "Every 5 minutes", "var(--text-mid)"],

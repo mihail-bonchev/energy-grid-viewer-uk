@@ -12,6 +12,7 @@ interface BessUnit {
   rawName: string;
   operator: string;
   region: string;
+  gspGroupId: string | null;
   bmUnitType: string;
   capacityMW: number;
   energyMWh: number | null;

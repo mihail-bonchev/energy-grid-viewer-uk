@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
+import { londonDateStr } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const todayStr = new Date().toISOString().split("T")[0];
+  // Diagnostic endpoint — development only
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  const todayStr = londonDateStr();
   const url = `https://data.elexon.co.uk/bmrs/api/v1/datasets/FUELINST?settlementDateFrom=${todayStr}&settlementDateTo=${todayStr}&format=json`;
 
   try {

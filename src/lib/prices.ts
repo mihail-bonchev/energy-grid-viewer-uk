@@ -1,3 +1,5 @@
+import { londonDateStr, londonDayBounds } from "./time";
+
 export interface PricePoint {
   time: string   // "HH:MM" London time
   price: number  // p/kWh inc. VAT (can be negative during surplus events)
@@ -47,13 +49,13 @@ export async function fetchAgilePrices(): Promise<PricesResponse> {
   const productCode = agileProduct.code;
   const tariffCode = `E-1R-${productCode}-A`; // Region A: Eastern England
 
-  const todayStr = now.toLocaleDateString("en-CA", { timeZone: "Europe/London" }); // YYYY-MM-DD
-  const nextDayStr = new Date(now.getTime() + 86_400_000).toLocaleDateString("en-CA", {
-    timeZone: "Europe/London",
-  });
+  const todayStr = londonDateStr(now);
+  const [dayStart, dayEnd] = londonDayBounds(todayStr);
+  const periodFrom = new Date(dayStart).toISOString();
+  const periodTo = new Date(dayEnd).toISOString();
 
   const ratesRes = await fetch(
-    `https://api.octopus.energy/v1/products/${productCode}/electricity-tariffs/${tariffCode}/standard-unit-rates/?period_from=${todayStr}T00:00:00Z&period_to=${nextDayStr}T01:00:00Z&page_size=100`,
+    `https://api.octopus.energy/v1/products/${productCode}/electricity-tariffs/${tariffCode}/standard-unit-rates/?period_from=${periodFrom}&period_to=${periodTo}&page_size=100`,
     { cache: "no-store" }
   );
   if (!ratesRes.ok) throw new Error(`Agile rates ${ratesRes.status}`);

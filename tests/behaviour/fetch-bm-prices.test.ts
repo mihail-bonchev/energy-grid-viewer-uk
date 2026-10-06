@@ -1,6 +1,6 @@
 /**
  * Behaviour tests for fetchBmPrices.
- * Fetch call order: BMU reference (call #0) then BOD windows in parallel (calls #1..N).
+ * Fetch call order: BMU reference (call #1) then a single BOD/stream request (call #2).
  * jest.isolateModules resets the BMU cache (bmu.ts) and _cache (bm-prices.ts) between tests.
  */
 
@@ -27,8 +27,9 @@ const BMU_REF = {
   }),
 };
 
+// BOD/stream returns a bare array (no { data } wrapper)
 function makeBodResponse(records: object[]) {
-  return { ok: true, json: async () => ({ data: records }) };
+  return { ok: true, json: async () => records };
 }
 
 function bodRecord(overrides: Partial<{
@@ -57,7 +58,31 @@ describe("fetchBmPrices", () => {
     });
   });
 
-  it("fetches BMU reference then BOD windows and returns aggregated points", async () => {
+  it("makes one BOD/stream request for the whole day, filtered to BESS units", async () => {
+    mockFetch
+      .mockResolvedValueOnce(BMU_REF)
+      .mockResolvedValueOnce(makeBodResponse([bodRecord({ pairId: 1, offer: 100 })]));
+
+    await fetchBmPrices();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const url = String(mockFetch.mock.calls[1][0]);
+    expect(url).toContain("/datasets/BOD/stream?");
+    expect(url).toContain("bmUnit=MINTY-1");
+    expect(url).toContain("bmUnit=PILBW-1");
+    expect(url).not.toContain("bmUnit=WIND01");
+  });
+
+  it("does not cache a failed fetch", async () => {
+    mockFetch
+      .mockResolvedValueOnce(BMU_REF)
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce(makeBodResponse([bodRecord({ pairId: 1, offer: 100 })]));
+
+    expect((await fetchBmPrices()).data).toEqual([]);
+    expect((await fetchBmPrices()).data[0].avgOffer).toBe(100); // retried, BMU ref cached
+  });
+
+  it("fetches BMU reference then BOD and returns aggregated points", async () => {
     mockFetch
       .mockResolvedValueOnce(BMU_REF)
       .mockResolvedValue(makeBodResponse([

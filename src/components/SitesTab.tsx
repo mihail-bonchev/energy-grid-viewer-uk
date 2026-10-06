@@ -7,6 +7,7 @@ import {
 } from "recharts";
 import type { SiteData } from "@/lib/sites";
 import type { StorageDataPoint } from "@/lib/elexon";
+import { londonDateStr, previousLondonDate } from "@/lib/time";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -100,11 +101,7 @@ function fmtTime(iso: string): string {
 // ─── Site history modal ───────────────────────────────────────────────────────
 
 function SiteHistoryModal({ site, onClose }: { site: SiteData; onClose: () => void }) {
-  const yesterday = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().split("T")[0];
-  }, []);
+  const yesterday = useMemo(() => previousLondonDate(londonDateStr()), []);
 
   const [date, setDate] = useState(yesterday);
   const [data, setData] = useState<StorageDataPoint[]>([]);

@@ -1,4 +1,5 @@
 import { fetchBessUnits, groupBoalf, boalfLevelAt, siteIdOf } from "./bmu";
+import { londonDateStr, londonDayBounds } from "./time";
 
 const ELEXON_BASE = "https://data.elexon.co.uk/bmrs/api/v1";
 
@@ -22,10 +23,10 @@ export interface SitesResponse {
 
 export async function fetchSitesLive(): Promise<SitesResponse> {
   const now = new Date();
-  const todayStr = now.toISOString().split("T")[0];
+  const [dayStart] = londonDayBounds(londonDateStr(now));
 
   const [boalfRes, units] = await Promise.all([
-    fetch(`${ELEXON_BASE}/datasets/BOALF?from=${todayStr}T00:00Z&to=${now.toISOString()}&format=json`, {
+    fetch(`${ELEXON_BASE}/datasets/BOALF?from=${new Date(dayStart).toISOString()}&to=${now.toISOString()}&format=json`, {
       cache: "no-store",
       headers: { Accept: "application/json" },
     }),

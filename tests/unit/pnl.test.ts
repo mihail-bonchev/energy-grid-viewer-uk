@@ -81,35 +81,33 @@ describe("computePnl — 30-min bucketing", () => {
 // ─── P&L arithmetic ───────────────────────────────────────────────────────────
 
 describe("computePnl — P&L calculation", () => {
-  // Formula: pnl (£k) = avgMW × price / 200  (rounded to 1dp)
+  // Formula: pnl (£k) = avgMW × 0.5h × price (£/MWh) / 1000 = avgMW × price / 2000  (rounded to 1dp)
 
-  it("discharging 1000 MW at 30 p/kWh → +£150k", () => {
-    // 1000 MW × 0.5h × (30 p/kWh × 10 £/MWh) / 1000 = 1000×0.5×300/1000 = 150
-    const [r] = computePnl(sixPoints("09:00", 1000), [pr("09:00", 30)]);
+  it("discharging 1000 MW at £300/MWh → +£150k", () => {
+    const [r] = computePnl(sixPoints("09:00", 1000), [pr("09:00", 300)]);
     expect(r.pnl).toBe(150);
   });
 
-  it("charging 500 MW at 20 p/kWh → -£50k", () => {
+  it("charging 500 MW at £200/MWh → -£50k", () => {
     // -500 × 0.5 × 200 / 1000 = -50
-    const [r] = computePnl(sixPoints("09:00", -500), [pr("09:00", 20)]);
+    const [r] = computePnl(sixPoints("09:00", -500), [pr("09:00", 200)]);
     expect(r.pnl).toBe(-50);
   });
 
   it("zero MW at any price → £0k P&L", () => {
-    const [r] = computePnl(sixPoints("09:00", 0), [pr("09:00", 100)]);
+    const [r] = computePnl(sixPoints("09:00", 0), [pr("09:00", 1000)]);
     expect(r.pnl).toBe(0);
   });
 
   it("negative price (surplus) while discharging → negative P&L", () => {
-    // Fleet discharged 1000 MW but price was -5 p/kWh (had to pay to export)
-    const [r] = computePnl(sixPoints("09:00", 1000), [pr("09:00", -5)]);
-    expect(r.pnl).toBe(-25); // 1000 × -5 / 200 = -25
+    // Fleet discharged 1000 MW but price was -£50/MWh (had to pay to export)
+    const [r] = computePnl(sixPoints("09:00", 1000), [pr("09:00", -50)]);
+    expect(r.pnl).toBe(-25); // 1000 × -50 / 2000
   });
 
   it("negative price while charging → positive P&L (paid to absorb)", () => {
-    // Charging at -10 p/kWh: grid pays you to consume
-    const [r] = computePnl(sixPoints("09:00", -1000), [pr("09:00", -10)]);
-    expect(r.pnl).toBe(50); // -1000 × -10 / 200 = 50
+    const [r] = computePnl(sixPoints("09:00", -1000), [pr("09:00", -100)]);
+    expect(r.pnl).toBe(50); // -1000 × -100 / 2000
   });
 
   it("result includes the price used for the calculation", () => {
@@ -118,14 +116,14 @@ describe("computePnl — P&L calculation", () => {
   });
 
   it("rounds pnl to 1 decimal place", () => {
-    // 100 MW × 3 p/kWh / 200 = 1.5 exactly
-    const [r] = computePnl(sixPoints("09:00", 100), [pr("09:00", 3)]);
-    expect(r.pnl).toBe(1.5);
+    // 100 MW × £31/MWh / 2000 = 1.55 → 1.6
+    const [r] = computePnl(sixPoints("09:00", 100), [pr("09:00", 31)]);
+    expect(r.pnl).toBe(1.6);
   });
 
   it("large fleet discharge produces correct large P&L", () => {
-    // 4000 MW × 60 p/kWh: 4000 × 60 / 200 = 1200 k£
-    const [r] = computePnl(sixPoints("18:00", 4000), [pr("18:00", 60)]);
+    // 4000 MW × £600/MWh / 2000 = 1200 k£
+    const [r] = computePnl(sixPoints("18:00", 4000), [pr("18:00", 600)]);
     expect(r.pnl).toBe(1200);
   });
 });
@@ -167,6 +165,6 @@ describe("computePnl — ordering and data passthrough", () => {
     }
     const result = computePnl(data, prices);
     expect(result).toHaveLength(48);
-    result.forEach((r) => expect(r.pnl).toBe(100)); // 1000 × 20 / 200
+    result.forEach((r) => expect(r.pnl).toBe(10)); // 1000 × 20 / 2000
   });
 });

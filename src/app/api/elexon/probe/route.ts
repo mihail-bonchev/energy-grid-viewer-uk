@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
+import { londonDateStr } from "@/lib/time";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // Diagnostic endpoint — development only
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   const base = "https://data.elexon.co.uk/bmrs/api/v1";
-  const today = new Date().toISOString().split("T")[0];
+  const today = londonDateStr();
   // Current settlement period (each SP = 30 min, 48 per day)
   const now = new Date();
   const sp = Math.floor((now.getUTCHours() * 60 + now.getUTCMinutes()) / 30) + 1;

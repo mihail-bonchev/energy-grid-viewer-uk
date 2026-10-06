@@ -15,6 +15,7 @@ interface BessUnit {
   name: string;
   operator: string;
   region: string;
+  gspGroupId: string | null;
   capacityMW: number;
   energyMWh: number | null;
 }
@@ -71,7 +72,10 @@ export default function UKMap() {
       siteMap.set(key, { ...u, totalMW: u.capacityMW, unitCount: 1 });
     }
   }
-  const sites = [...siteMap.values()];
+  // Resolve locations once; sites with no known location are listed, not plotted
+  const located = [...siteMap.values()].map((s) => ({ ...s, coords: getCoordinates(s.id, s.gspGroupId) }));
+  const sites = located.filter((s): s is typeof s & { coords: [number, number] } => s.coords !== null);
+  const unlocated = located.filter((s) => s.coords === null);
 
   const totalCapacity = units.reduce((s, u) => s + u.capacityMW, 0);
 
@@ -95,10 +99,18 @@ export default function UKMap() {
         <div>
           <div style={{ fontWeight: 600, fontSize: 15 }}>GB Grid-Scale BESS — Site Map</div>
           <div style={{ color: "var(--text-dim)", fontSize: 12, marginTop: 3 }}>
-            {sites.length} sites · {units.length} BMUs · {Math.round(totalCapacity / 1000).toFixed(1)} GW installed
+            {sites.length} sites mapped · {units.length} BMUs · {(totalCapacity / 1000).toFixed(1)} GW registered
             <span style={{ marginLeft: 8, color: "var(--text-dim)", fontSize: 11 }}>
-              · Bubble area ∝ capacity · Exact coords for known sites, regional centroid otherwise
+              · Bubble area ∝ capacity · Town-level coords for known sites, GSP region centroid otherwise
             </span>
+            {unlocated.length > 0 && (
+              <div
+                style={{ color: "var(--text-dim)", fontSize: 11, marginTop: 3 }}
+                title={unlocated.map((s) => `${s.name} (${s.id})`).join("\n")}
+              >
+                {unlocated.length} transmission sites ({Math.round(unlocated.reduce((a, s) => a + s.totalMW, 0))} MW) not shown — no location in Elexon data
+              </div>
+            )}
           </div>
         </div>
 
@@ -152,7 +164,7 @@ export default function UKMap() {
               </Geographies>
 
               {sites.map((site) => {
-                const coords = getCoordinates(site.id, site.region);
+                const coords = site.coords;
                 const r = capacityToRadius(site.totalMW);
                 const color = colorBy === "operator"
                   ? (operatorColors[site.operator] ?? "var(--accent)")

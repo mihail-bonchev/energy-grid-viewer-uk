@@ -1,5 +1,7 @@
 // ─── BESS unit reference data (shared by elexon.ts, sites.ts, /api/units) ────
 
+import { GSP_NAMES } from "./bess-sites";
+
 const ELEXON_BASE = "https://data.elexon.co.uk/bmrs/api/v1";
 
 export interface BessUnit {
@@ -8,7 +10,8 @@ export interface BessUnit {
   name: string;        // human-readable site name
   rawName: string;     // bmUnitName as published
   operator: string;
-  region: string;      // gspGroupName
+  region: string;      // canonical GSP group name, or "Transmission" if none
+  gspGroupId: string | null;
   bmUnitType: string;
   capacityMW: number;
   fpnFlag: boolean;
@@ -84,13 +87,15 @@ export async function fetchBessUnits(): Promise<BessUnit[]> {
     if (!id || !isBessUnit(u)) continue;
     const genCap = parseFloat(String(u.generationCapacity ?? "0")) || 0;
     const demCap = Math.abs(parseFloat(String(u.demandCapacity ?? "0")) || 0);
+    const gsp = u.gspGroupId ? String(u.gspGroupId) : null;
     units.push({
       id,
       elexonId: String(u.elexonBmUnit ?? ""),
       name: siteDisplayName(siteIdOf(id), u.bmUnitName as string | null),
       rawName: String(u.bmUnitName ?? id),
       operator: String(u.leadPartyName ?? "Unknown"),
-      region: String(u.gspGroupName ?? "Unknown"),
+      region: gsp ? (GSP_NAMES[gsp] ?? String(u.gspGroupName ?? gsp)) : "Transmission",
+      gspGroupId: gsp,
       bmUnitType: String(u.bmUnitType ?? ""),
       capacityMW: Math.round(Math.max(genCap, demCap) * 10) / 10,
       fpnFlag: Boolean(u.fpnFlag),

@@ -14,11 +14,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid site ID" }, { status: 400 });
   }
 
-  const data = site
-    ? await fetchSiteTimeSeries(date, site)
-    : await fetchStorageDataForDate(date);
+  try {
+    const data = site
+      ? await fetchSiteTimeSeries(date, site)
+      : await fetchStorageDataForDate(date);
 
-  return NextResponse.json({ data }, {
-    headers: { "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=300" },
-  });
+    return NextResponse.json({ data }, {
+      headers: { "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=300" },
+    });
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 502 });
+  }
 }
