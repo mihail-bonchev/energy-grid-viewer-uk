@@ -48,12 +48,14 @@ Three layers:
 ### Data Flow
 
 ```
-Browser → /api/elexon         → PN → BOALF → FUELINST  (priority fallback chain)
+Browser → /api/elexon         → PN → BOALF → FUELINST  (priority fallback chain; /api is an alias)
 Browser → /api/elexon/history → BOALF for a specific past date
 Browser → /api/units          → data.elexon.co.uk/bmrs/api/v1/reference/bmunits/all
 Browser → /api/sites          → BOALF per-unit live leaderboard
 Browser → /api/prices         → Octopus Agile half-hourly p/kWh (Region A)
 Browser → /api/carbon         → api.carbonintensity.org.uk half-hourly gCO₂/kWh
+Browser → /api/bm-prices      → Elexon BOD/stream, one request for the day filtered to BESS units
+Browser → /api/market-price   → Elexon market index (APXMIDP) £/MWh — drives the P&L panel
 ```
 
 The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source = "mock"`) if all Elexon sources fail.
@@ -70,14 +72,15 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 
 | Route | Purpose |
 |---|---|
-| `GET /api/elexon` | Main data endpoint — returns `StorageDataPoint[]` via PN→BOALF→FUELINST fallback |
+| `GET /api/elexon` | Main data endpoint — returns `StorageDataPoint[]` via PN→BOALF→FUELINST fallback. `src/app/api/route.ts` re-exports it as `/api` for backward compatibility |
 | `GET /api/elexon/history?date=YYYY-MM-DD` | Historical BESS data for a specific past date via BOALF; 1-hour cache |
 | `GET /api/units` | Fleet directory — ~155 BESS BMUs (~7.5 GW) from Elexon reference API via `fetchBessUnits()` |
 | `GET /api/sites` | Per-site live leaderboard — BOALF aggregated by physical site |
 | `GET /api/prices` | Octopus Agile half-hourly prices (p/kWh inc. VAT, Region A) |
 | `GET /api/carbon` | Grid carbon intensity half-hourly actuals + forecast (gCO₂eq/kWh) |
-| `GET /api/elexon/debug` | Raw Elexon response inspector |
-| `GET /api/elexon/probe` | Tests endpoint variants (dev only) |
+| `GET /api/market-price` | Elexon Market Index Price (APXMIDP) per SP, £/MWh |
+| `GET /api/elexon/debug` | FUELINST fuel-type inspector (404 in production) |
+| `GET /api/elexon/probe` | Tests endpoint variants (404 in production) |
 
 ## Data Sources — Priority Chain
 
@@ -101,14 +104,17 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 - **`nationalGridBmUnit` has no `E_`/`T_` prefix** (`WHTBB-1`); `elexonBmUnit`/`bmUnit` does (`E_WHTBB-1`). Site ID = NG ID minus trailing `-N`.
 - **BOALF rows are linear segments over `[timeFrom, timeTo)`**, from `levelFrom` to `levelTo`; overlapping acceptances → highest `acceptanceNumber` wins; outside every segment the BM-instructed level is 0. Never hold a level past `timeTo` (`boalfLevelAt()` in `bmu.ts`).
 - **FUELINST has no SOLAR fuel type** — `solar` is always 0 from that source.
-- **PN dataset (`/datasets/PN`) returns 404** as of 2026-05-13 — `fetchStorageData()` falls through immediately to BOALF. The fallback chain is still correct; BOALF is now the effective primary source.
+- **`/datasets/PN?from&to` returns 400** (it needs settlementDate+settlementPeriod), so `fetchStorageData()` falls through to BOALF. **`/datasets/PN/stream?from&to` works with no key** (verified 2026-10-06) and is the way to restore PN.
+- **"Today" is the London day** everywhere (`src/lib/time.ts`): settlement dates, Agile and carbon all start at 23:00Z during BST. Never use `toISOString().split("T")[0]` for a day boundary.
+- **`/datasets/BOD` caps windows at 1 hour**; `/datasets/BOD/stream` takes a whole day when filtered with repeated `bmUnit=` params.
+- **Performance:** BOALF series must parse timestamps once (`boalfSeries` sweeps pre-parsed segments). Re-parsing per 5-min slot took ~80 s for a full day.
 - **`fetchBessTimeSeries(dataset, dateStr?)`** accepts an optional `dateStr` (YYYY-MM-DD). When omitted it defaults to today; when provided it fetches the full day (00:00–23:59Z) and caches the result for 1 hour. Used by `/api/elexon/history`.
 - **Yesterday overlay** in Dashboard merges historical points into today's chart by matching HH:MM substrings (same technique as the pumped-hydro merge). Renders as a dashed white `<Line>` over the `<AreaChart>`.
 
 ## Site Map (`src/components/UKMap.tsx`)
 
 - Uses `react-simple-maps` with Natural Earth 50m world TopoJSON (fetched from jsDelivr CDN at runtime)
-- Site coordinates in `src/lib/bess-sites.ts`: town-level lat/lng for ~50 identified sites keyed by site ID (e.g. `"KILSB"`, `"PILLB"`), GSP group centroids as fallback for the rest
+- Site coordinates in `src/lib/bess-sites.ts`: town-level lat/lng for ~50 identified sites keyed by site ID (e.g. `"KILSB"`, `"PILLB"`), GSP group centroids (keyed by `gspGroupId`) as fallback. ~80 transmission units have no GSP group and no known coords — they are left off the map and counted in the header, not stacked at a fake point
 - Bubble area ∝ capacity MW; BMUs from the same physical site are deduplicated by stripping the trailing `-N` unit number
 - Two colour modes: by capacity (all green) and by operator (distinct colours)
 - **Must be loaded with `dynamic(..., { ssr: false })`** — d3-geo is ESM-only and crashes the Next.js server renderer if imported directly
@@ -138,16 +144,16 @@ These were not in the original build but have since been added:
 - **Carbon intensity overlay** (`/api/carbon`) — half-hourly gCO₂eq/kWh, colour-coded by index. Toggle in main chart header.
 - **Live Sites tab** (`/api/sites`, `SitesTab`) — per-site leaderboard ranked by |currentMW|, toggle active-only vs all, sortable.
 - **Yesterday overlay** (`/api/elexon/history`, Dashboard) — dashed reference line on the main chart showing the same metric from the previous day. Fetched lazily on first toggle.
-- **BM bid/offer prices overlay** (`/api/bm-prices`, `src/lib/bm-prices.ts`) — fleet-average accepted bid/offer prices per SP from Elexon BOD dataset. Offer (amber) = discharge price £/MWh; Bid (blue) = charge price. Toggle in main chart header.
-- **Settlement period P&L estimate** (`src/lib/pnl.ts`) — estimated gross revenue per SP: `avgMW × Agile_price / 200` (£k). Bar chart with running daily total. Toggle in main chart header.
+- **BM bid/offer prices overlay** (`/api/bm-prices`, `src/lib/bm-prices.ts`) — fleet-average *submitted* (not accepted) bid/offer prices per SP from Elexon BOD/stream. Offer (amber) = discharge price £/MWh; Bid (blue) = charge price. Toggle in main chart header.
+- **Settlement period P&L estimate** (`src/lib/pnl.ts`) — estimated gross revenue per SP: `avgMW × MIP / 2000` (£k), MIP = Elexon Market Index Price £/MWh (`/api/market-price`). Bar chart with running daily total. Toggle in main chart header.
 - **Wind & solar overlay** (`StorageDataPoint.wind/solar`) — FUELINST WIND and SOLAR fields threaded through the data pipeline. Teal (wind) and yellow (solar) lines in a separate panel. Toggle in main chart header.
 
 ## Possible Enhancements
 
 - **System Price (SSP/SBP)** — Elexon imbalance price per settlement period; much spikier than Agile and the real driver of BM dispatch. Free from Elexon, no key.
 - **Grid frequency overlay** — National Grid ESO publishes live 50 Hz ± deviation; shows FFR/DC service response in real time.
-- **Improve map coordinates** — most non-KNOWN_BESS sites fall back to GSP region centroid; adding exact coordinates to `src/lib/bess-sites.ts` improves accuracy.
-- **Per-site historic view (enhancement)** — the current implementation uses BOALF (BM-dispatched only); a richer view could be added using the legacy BMRS PHYBMDATA endpoint (free API key from elexon.co.uk) to include PN data showing merchant charging.
+- **Improve map coordinates** — ~80 transmission-connected BMUs have no GSP group; adding their sites to `SITE_COORDS` in `src/lib/bess-sites.ts` puts them on the map.
+- **Per-site historic view (enhancement)** — the current implementation uses BOALF (BM-dispatched only); a richer view could use `/datasets/PN/stream` (no key needed) to include merchant charging.
 - **Per-site historic view** (`fetchSiteTimeSeries`, `/api/elexon/history?date=&site=`, `SiteHistoryModal`) — History button per site row in Live Sites tab; opens modal with date picker and per-site BOALF charge/discharge chart. No API key needed.
 
 ## Production Deployment
