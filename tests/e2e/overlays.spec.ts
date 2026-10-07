@@ -97,6 +97,22 @@ test.describe("Overlay toggles", () => {
     });
   });
 
+  test.describe("Grid frequency overlay", () => {
+    test("clicking Frequency shows the frequency chart with live stats", async ({ page }) => {
+      await page.getByRole("button", { name: /Frequency/ }).click();
+      await expect(page.getByText("Grid Frequency — Last Hour")).toBeVisible();
+      await expect(page.getByText(/\d{2}\.\d{3} Hz/).first()).toBeVisible({ timeout: 15_000 }); // "Now" reading
+    });
+
+    test("clicking Frequency again hides the chart", async ({ page }) => {
+      const btn = page.getByRole("button", { name: /Frequency/ });
+      await btn.click();
+      await expect(page.getByText("Grid Frequency — Last Hour")).toBeVisible();
+      await btn.click();
+      await expect(page.getByText("Grid Frequency — Last Hour")).not.toBeVisible();
+    });
+  });
+
   test.describe("P&L price basis", () => {
     test("P&L can be valued at the system price", async ({ page }) => {
       await page.getByRole("button", { name: /P&L/ }).click();

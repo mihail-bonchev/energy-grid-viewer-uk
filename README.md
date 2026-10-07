@@ -14,6 +14,7 @@ Live at [grid.xelantis.com](https://grid.xelantis.com).
   - System (imbalance) price with net imbalance volume
   - Estimated P&L at the wholesale Market Index Price or the system price
   - Wind
+  - Grid frequency (last hour, 15-second resolution)
   - Yesterday's curve for comparison
 - **Live Sites**: per-site leaderboard of current output, with a "BM" tag where a System Operator instruction is in force, and a per-site history modal
 - **Fleet Directory**: about 155 BESS units (about 7.5 GW) from the Elexon unit reference data
@@ -31,6 +32,7 @@ Browser → /api/units           → Elexon /reference/bmunits/all
 Browser → /api/bm-prices       → Elexon BOD/stream (submitted bid/offer prices)
 Browser → /api/market-price    → Elexon market index (APXMIDP)
 Browser → /api/system-prices   → Elexon system prices (SSP/SBP, NIV)
+Browser → /api/frequency       → Elexon system frequency
 Browser → /api/prices          → Octopus Agile (Region A)
 Browser → /api/carbon          → api.carbonintensity.org.uk
 ```
@@ -52,7 +54,7 @@ The proxy routes avoid CORS problems: every upstream request is made server-side
 npm install
 npm run dev     # http://localhost:3000
 npm test        # unit + behaviour tests
-npm run lint
+npm run lint    # includes Sonar cognitive complexity ≤ 15
 ```
 
 ## Deployment

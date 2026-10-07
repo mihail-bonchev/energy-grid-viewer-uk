@@ -2,6 +2,7 @@
 
 import type { ApiResponse, StorageDataPoint } from "@/lib/elexon";
 import type { PnlPoint } from "@/lib/pnl";
+import { NOMINAL_HZ, OPERATIONAL_LIMIT_HZ } from "@/lib/frequency";
 
 export type StorageView = "battery" | "pumped" | "total";
 
@@ -109,4 +110,31 @@ export function sourceDisplay(source: ApiResponse["meta"]["source"]): { label: s
     case "mock":     return { label: "MOCK", color: "var(--warn)" };
     default:         return { label: source.toUpperCase(), color: "var(--text-mid)" };
   }
+}
+
+// Frequency colour: green within ±0.1 Hz, amber up to the ±0.2 Hz operational limit, red beyond.
+// Elexon publishes frequency to 3 dp; rounding to that avoids float noise
+// (|49.9 − 50| is 0.1000000000000014, |49.8 − 50| is 0.2000000000000028).
+const round3 = (x: number) => Math.round(x * 1000) / 1000;
+
+export function frequencyColor(hz: number): string {
+  const dev = round3(Math.abs(hz - NOMINAL_HZ));
+  if (dev <= 0.1) return "#00ffb3";
+  if (dev <= OPERATIONAL_LIMIT_HZ) return "#fbbf24";
+  return "#f87171";
+}
+
+// Y-axis range: always shows the ±0.2 Hz limits with a margin, widening to fit excursions.
+export function frequencyDomain(points: Array<{ hz: number }>): [number, number] {
+  const values = points.map((p) => p.hz);
+  const lo = Math.min(49.75, ...values.map((v) => v - 0.02));
+  const hi = Math.max(50.25, ...values.map((v) => v + 0.02));
+  // Math.round(x * 1000) is an exact integer, so /10 then floor/ceil works in whole hundredths
+  return [Math.floor(Math.round(lo * 1000) / 10) / 100, Math.ceil(Math.round(hi * 1000) / 10) / 100];
+}
+
+// "0%" only when nothing went outside; a rare excursion that rounds to 0.0 shows "<0.1%".
+export function fmtPctOutside(pct: number, outside: number): string {
+  if (outside > 0 && pct < 0.1) return "<0.1%";
+  return `${pct}%`;
 }

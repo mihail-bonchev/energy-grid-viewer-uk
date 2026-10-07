@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run dev      # Dev server at http://localhost:3000
 npm run build    # Production build
 npm start        # Run production server
-npm run lint     # ESLint check (no --fix flag configured)
+npm run lint     # ESLint (next/core-web-vitals + Sonar cognitive complexity ≤ 15)
 
 # Tests
 npm test                  # Unit + behaviour tests (Jest, ~5s)
@@ -57,6 +57,7 @@ Browser → /api/carbon         → api.carbonintensity.org.uk half-hourly gCO�
 Browser → /api/bm-prices      → Elexon BOD/stream, one request for the day filtered to BESS units
 Browser → /api/market-price   → Elexon market index (APXMIDP) £/MWh — drives the P&L panel
 Browser → /api/system-prices  → Elexon imbalance price (SSP/SBP) + NIV per SP for today's settlement date
+Browser → /api/frequency      → Elexon system frequency (15 s): last hour for the chart + today's stats
 ```
 
 The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source = "mock"`) if all Elexon sources fail.
@@ -86,6 +87,7 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 | `GET /api/carbon` | Grid carbon intensity half-hourly actuals + forecast (gCO₂eq/kWh) |
 | `GET /api/market-price` | Elexon Market Index Price (APXMIDP) per SP, £/MWh |
 | `GET /api/system-prices` | Elexon system (imbalance) price SSP/SBP and NIV per SP, today's London settlement date |
+| `GET /api/frequency` | Grid frequency: last hour of 15-second readings plus today's current/min/max and % outside 49.8–50.2 Hz |
 | `GET /api/elexon/debug` | FUELINST fuel-type inspector (404 in production) |
 | `GET /api/elexon/probe` | Tests endpoint variants (404 in production) |
 
@@ -113,6 +115,8 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 - **FUELINST has no SOLAR fuel type** — `solar` is always 0 from that source.
 - **Use the `/stream` variants for PN and BOALF**, filtered with repeated `bmUnit=` params for BESS units: one request per day, bare-array response (~2MB PN, ~3.5MB BOALF). Plain `/datasets/PN?from&to` returns 400 (it needs settlementDate+settlementPeriod).
 - **"Today" is the London day** everywhere (`src/lib/time.ts`): settlement dates, Agile and carbon all start at 23:00Z during BST. Never use `toISOString().split("T")[0]` for a day boundary.
+- **`/system/frequency` returns *yesterday* when called without `from`/`to`** — always pass an explicit window. 15-second readings, published ~90 s behind real time (~300 KB per day).
+- **Floating point at limits:** `|49.8 − 50|` is `0.2000000000000028`. Compare readings to limit values directly or round to 3 dp (Elexon's precision) before comparing.
 - **`/datasets/BOD` caps windows at 1 hour**; `/datasets/BOD/stream` takes a whole day when filtered with repeated `bmUnit=` params.
 - **Performance:** BOALF series must parse timestamps once (`boalfSeries` sweeps pre-parsed segments). Re-parsing per 5-min slot took ~80 s for a full day.
 - **`fetchBessSeries(dateStr?, siteId?)`** (in `elexon.ts`) builds every BESS series — today (up to now), a past London day, or one site — so the main chart, yesterday overlay and site history are all PN+BOALF and directly comparable.
@@ -143,7 +147,7 @@ CSS custom properties defined in `src/app/globals.css`:
 
 Components use inline `style` objects rather than CSS modules or Tailwind. Reuse the primitives in `src/components/overview/ui.tsx` rather than copying card/tooltip/button styles.
 
-**Cognitive complexity:** keep every function under 15 (Sonar rule S3776, default threshold). As of 2026-10-07 nothing in `src/` exceeds 14. Prefer lookup tables over long `if/else` chains (see `MOCK_PROFILE` in `elexon.ts`) and extract pure helpers.
+**Cognitive complexity:** every function must be ≤ 15 (Sonar rule S3776, default threshold). **Enforced:** `.eslintrc.json` sets `sonarjs/cognitive-complexity` to `error` (eslint-plugin-sonarjs 0.25, the line that supports ESLint 8), so `npm run lint` and `next build` fail on a violation and Railway will not deploy it. Prefer lookup tables over long `if/else` chains (see `MOCK_PROFILE` in `elexon.ts`) and extract pure helpers.
 
 ## Shipped Enhancements
 
@@ -157,11 +161,11 @@ These were not in the original build but have since been added:
 - **BM bid/offer prices overlay** (`/api/bm-prices`, `src/lib/bm-prices.ts`) — fleet-average *submitted* (not accepted) bid/offer prices per SP from Elexon BOD/stream. Offer (amber) = discharge price £/MWh; Bid (blue) = charge price. Toggle in main chart header.
 - **Settlement period P&L estimate** (`src/lib/pnl.ts`) — estimated gross revenue per SP: `avgMW × price / 2000` (£k). Basis switch in the panel: Market Index Price (`/api/market-price`, default) or System price (`/api/system-prices`). Bar chart with running daily total. Toggle in main chart header.
 - **System price overlay** (`/api/system-prices`, `src/lib/system-prices.ts`, `src/components/overview/SystemPricePanel.tsx`) — SSP line (pink) with dashed Market Index Price for comparison, NIV bars on a right axis (red = system short, blue = long). Toggle "⚖️ System Price". Initial settlement values, published ~20 min after each SP.
+- **Grid frequency overlay** (`/api/frequency`, `src/lib/frequency.ts`, `src/components/overview/FrequencyPanel.tsx`) — last hour at 15-s resolution with 50 Hz and ±0.2 Hz operational-limit lines; header stats over the whole day. Polls every minute while open (`useTicker`). Toggle "〰️ Frequency".
 - **Wind & solar overlay** (`StorageDataPoint.wind/solar`) — FUELINST WIND and SOLAR fields threaded through the data pipeline. Teal (wind) and yellow (solar) lines in a separate panel. Toggle in main chart header.
 
 ## Possible Enhancements
 
-- **Grid frequency overlay** — National Grid ESO publishes live 50 Hz ± deviation; shows FFR/DC service response in real time.
 - **Improve map coordinates** — ~80 transmission-connected BMUs have no GSP group; adding their sites to `SITE_COORDS` in `src/lib/bess-sites.ts` puts them on the map.
 - **Per-site historic view** (`fetchSiteTimeSeries`, `/api/elexon/history?date=&site=`, `SiteHistoryModal`) — History button per site row in Live Sites tab; opens modal with date picker and per-site PN+BOALF charge/discharge chart. No API key needed.
 

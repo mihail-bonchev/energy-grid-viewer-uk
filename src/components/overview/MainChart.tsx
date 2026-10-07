@@ -7,7 +7,7 @@ import { VIEW_LABELS } from "./helpers";
 import type { StorageView } from "./helpers";
 import { Legend, ToggleButton, TooltipBox, TooltipRow } from "./ui";
 
-export type OverlayKey = "prices" | "carbon" | "yesterday" | "bmprices" | "sysprice" | "pnl" | "renewables";
+export type OverlayKey = "prices" | "carbon" | "yesterday" | "bmprices" | "sysprice" | "pnl" | "renewables" | "frequency";
 
 export const OVERLAYS: Array<{ key: OverlayKey; label: string }> = [
   { key: "prices",     label: "⚡ Prices" },
@@ -17,6 +17,7 @@ export const OVERLAYS: Array<{ key: OverlayKey; label: string }> = [
   { key: "sysprice",   label: "⚖️ System Price" },
   { key: "pnl",        label: "💰 P&L" },
   { key: "renewables", label: "🌬️ Renewables" },
+  { key: "frequency",  label: "〰️ Frequency" },
 ];
 
 const YESTERDAY_COL = "#a78bfa";

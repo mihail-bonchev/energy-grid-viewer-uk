@@ -17,6 +17,7 @@ import BmPricesPanel from "./BmPricesPanel";
 import SystemPricePanel from "./SystemPricePanel";
 import PnlPanel from "./PnlPanel";
 import RenewablesPanel from "./RenewablesPanel";
+import FrequencyPanel from "./FrequencyPanel";
 import BottomRow from "./BottomRow";
 
 export default function OverviewTab({ apiData, view, onView, overlays, onToggle }: {
@@ -68,6 +69,7 @@ export default function OverviewTab({ apiData, view, onView, overlays, onToggle 
       {overlays.has("sysprice") && <SystemPricePanel refreshKey={refreshKey} />}
       {overlays.has("pnl") && <PnlPanel data={data} view={view} refreshKey={refreshKey} />}
       {overlays.has("renewables") && <RenewablesPanel data={data} />}
+      {overlays.has("frequency") && <FrequencyPanel refreshKey={refreshKey} />}
 
       <BottomRow data={data} source={meta.source} />
     </>

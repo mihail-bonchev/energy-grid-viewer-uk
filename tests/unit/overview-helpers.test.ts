@@ -1,6 +1,7 @@
 import {
   getPriceColor, getCarbonColor, heroIcon, heroCaption, summariseToday, buildHourlyData,
   mergeYesterday, toLondonMw, pnlTotal, fmtSignedK, sourceDisplay, VIEW_LABELS,
+  frequencyColor, frequencyDomain, fmtPctOutside,
 } from "@/components/overview/helpers";
 import type { StorageDataPoint } from "@/lib/elexon";
 
@@ -128,5 +129,40 @@ describe("sourceDisplay / VIEW_LABELS", () => {
 
   it("has a label for every view", () => {
     expect(VIEW_LABELS).toEqual({ battery: "BESS", pumped: "Pumped Hydro", total: "Total Storage" });
+  });
+});
+
+// ─── frequency ────────────────────────────────────────────────────────────────
+
+describe("frequencyColor", () => {
+  it.each([
+    [50.0, "#00ffb3"], [49.9, "#00ffb3"], [50.1, "#00ffb3"],
+    [49.85, "#fbbf24"], [50.2, "#fbbf24"], [49.8, "#fbbf24"],
+    [49.79, "#f87171"], [50.3, "#f87171"],
+  ])("%p Hz → %s", (hz, color) => {
+    expect(frequencyColor(hz)).toBe(color);
+  });
+});
+
+describe("frequencyDomain", () => {
+  it("defaults to 49.75–50.25 so both operational limits are visible", () => {
+    expect(frequencyDomain([{ hz: 50.01 }, { hz: 49.95 }])).toEqual([49.75, 50.25]);
+    expect(frequencyDomain([])).toEqual([49.75, 50.25]);
+  });
+
+  it("widens to fit an excursion beyond the limits", () => {
+    expect(frequencyDomain([{ hz: 49.6 }, { hz: 50.0 }])).toEqual([49.58, 50.25]);
+    expect(frequencyDomain([{ hz: 50.31 }])).toEqual([49.75, 50.33]);
+  });
+});
+
+describe("fmtPctOutside", () => {
+  it("shows <0.1% for a rare excursion that rounds to zero", () => {
+    expect(fmtPctOutside(0, 1)).toBe("<0.1%"); // e.g. 1 of 4,888 readings
+  });
+
+  it("shows 0% only when nothing went outside, else the percentage", () => {
+    expect(fmtPctOutside(0, 0)).toBe("0%");
+    expect(fmtPctOutside(2.5, 120)).toBe("2.5%");
   });
 });

@@ -1,3 +1,7 @@
 {
-  "extends": ["next/core-web-vitals"]
+  "extends": ["next/core-web-vitals"],
+  "plugins": ["sonarjs"],
+  "rules": {
+    "sonarjs/cognitive-complexity": ["error", 15]
+  }
 }
