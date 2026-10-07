@@ -1,4 +1,4 @@
-import { isBessUnit, siteIdOf, siteDisplayName, boalfLevelAt, boalfActiveAt, physicalLevelAt, physicalSeries, groupBoalf } from "@/lib/bmu";
+import { isBessUnit, toBessUnit, siteIdOf, siteDisplayName, boalfLevelAt, boalfActiveAt, physicalLevelAt, physicalSeries, groupBoalf } from "@/lib/bmu";
 import type { BoalfRecord } from "@/lib/bmu";
 
 // ─── isBessUnit ───────────────────────────────────────────────────────────────
@@ -186,5 +186,27 @@ describe("physicalSeries", () => {
   it("includes units that appear only in BOALF", () => {
     const out = physicalSeries(new Map(), new Map([["A-1", [rec("10:00", "10:30", 40, 40, 1)]]]), T("10:00"), T("10:00"));
     expect(out[0].mw).toBe(40);
+  });
+});
+
+// ─── toBessUnit ───────────────────────────────────────────────────────────────
+
+describe("toBessUnit", () => {
+  it("maps a distribution-connected unit with a GSP group", () => {
+    expect(toBessUnit({
+      nationalGridBmUnit: "PILLB-1", elexonBmUnit: "E_PILLB-1", bmUnitName: "Pillswood 1 Battery Storage",
+      leadPartyName: "BP Gas Marketing Limited", gspGroupId: "_M", gspGroupName: "Yorkshire Electricity",
+      bmUnitType: "E", generationCapacity: "49.94", demandCapacity: "-50.06", fpnFlag: true,
+    })).toEqual({
+      id: "PILLB-1", elexonId: "E_PILLB-1", name: "Pillswood Battery Storage",
+      rawName: "Pillswood 1 Battery Storage", operator: "BP Gas Marketing Limited",
+      region: "Yorkshire", gspGroupId: "_M", // canonical name from the code, not the variant spelling
+      bmUnitType: "E", capacityMW: 50.1, fpnFlag: true,
+    });
+  });
+
+  it("labels units without a GSP group as Transmission and tolerates missing fields", () => {
+    const u = toBessUnit({ nationalGridBmUnit: "BNKSB-1" });
+    expect(u).toMatchObject({ region: "Transmission", gspGroupId: null, capacityMW: 0, operator: "Unknown", name: "BNKSB" });
   });
 });

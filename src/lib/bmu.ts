@@ -70,6 +70,35 @@ let _cache: BessUnit[] | null = null;
 let _cacheAt = 0;
 const CACHE_TTL = 3_600_000; // 1 hour
 
+function parseCapacity(value: unknown): number {
+  return Math.abs(parseFloat(String(value ?? "0")) || 0);
+}
+
+// Canonical region name from the GSP group code; transmission units have none.
+function regionOf(gspGroupId: string | null, gspGroupName: unknown): string {
+  if (!gspGroupId) return "Transmission";
+  return GSP_NAMES[gspGroupId] ?? String(gspGroupName ?? gspGroupId);
+}
+
+// Map one reference-data record to a BessUnit (caller has checked isBessUnit).
+export function toBessUnit(u: Record<string, unknown>): BessUnit {
+  const id = String(u.nationalGridBmUnit);
+  const gsp = u.gspGroupId ? String(u.gspGroupId) : null;
+  const capacity = Math.max(parseCapacity(u.generationCapacity), parseCapacity(u.demandCapacity));
+  return {
+    id,
+    elexonId: String(u.elexonBmUnit ?? ""),
+    name: siteDisplayName(siteIdOf(id), u.bmUnitName as string | null),
+    rawName: String(u.bmUnitName ?? id),
+    operator: String(u.leadPartyName ?? "Unknown"),
+    region: regionOf(gsp, u.gspGroupName),
+    gspGroupId: gsp,
+    bmUnitType: String(u.bmUnitType ?? ""),
+    capacityMW: Math.round(capacity * 10) / 10,
+    fpnFlag: Boolean(u.fpnFlag),
+  };
+}
+
 export async function fetchBessUnits(): Promise<BessUnit[]> {
   if (_cache && Date.now() - _cacheAt < CACHE_TTL) return _cache;
 
@@ -81,27 +110,7 @@ export async function fetchBessUnits(): Promise<BessUnit[]> {
   const json = await res.json();
   const all: Record<string, unknown>[] = json?.data ?? json ?? [];
 
-  const units: BessUnit[] = [];
-  for (const u of all) {
-    const id = String(u.nationalGridBmUnit ?? "");
-    if (!id || !isBessUnit(u)) continue;
-    const genCap = parseFloat(String(u.generationCapacity ?? "0")) || 0;
-    const demCap = Math.abs(parseFloat(String(u.demandCapacity ?? "0")) || 0);
-    const gsp = u.gspGroupId ? String(u.gspGroupId) : null;
-    units.push({
-      id,
-      elexonId: String(u.elexonBmUnit ?? ""),
-      name: siteDisplayName(siteIdOf(id), u.bmUnitName as string | null),
-      rawName: String(u.bmUnitName ?? id),
-      operator: String(u.leadPartyName ?? "Unknown"),
-      region: gsp ? (GSP_NAMES[gsp] ?? String(u.gspGroupName ?? gsp)) : "Transmission",
-      gspGroupId: gsp,
-      bmUnitType: String(u.bmUnitType ?? ""),
-      capacityMW: Math.round(Math.max(genCap, demCap) * 10) / 10,
-      fpnFlag: Boolean(u.fpnFlag),
-    });
-  }
-
+  const units = all.filter((u) => u.nationalGridBmUnit && isBessUnit(u)).map(toBessUnit);
   _cache = units;
   _cacheAt = Date.now();
   return units;

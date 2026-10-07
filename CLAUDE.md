@@ -27,7 +27,7 @@ Three layers:
 
 | Layer | Tool | Location | What it covers |
 |---|---|---|---|
-| Unit | Jest + ts-jest | `tests/unit/` | Pure functions: `fmtMW`, `fmtTime`, `getStatus`, `generateMockData` |
+| Unit | Jest + ts-jest | `tests/unit/` | Pure functions: formatting, BESS classification, PN/BOALF level maths, London-day helpers, P&L, BOD aggregation, Overview helpers (`src/components/overview/helpers.ts`) |
 | Behaviour | Jest + ts-jest | `tests/behaviour/` | Lib functions with `global.fetch` mocked: carbon, prices, sites, storage data fetching |
 | E2E | Playwright | `tests/e2e/` | Full browser flows: page load, overlay toggles, tab navigation |
 
@@ -64,7 +64,12 @@ The proxy routes solve CORS. `/api/elexon` falls back to mock data (`meta.source
 ### Rendering Strategy
 
 - **`src/app/page.tsx`** — server component; calls `fetchStorageData()` at request time so the page arrives fully rendered
-- **`src/components/Dashboard.tsx`** — client component (`"use client"`); owns tab state, 5-minute auto-refresh, and all interactive state. Four tabs: Live Overview, Live Sites, Fleet Directory, Site Map
+- **`src/components/Dashboard.tsx`** — client component (~120 lines); owns only the main data + 5-minute auto-refresh (`useStorageData`), the active tab, the selected view and the set of open overlays (kept here so they survive tab switches). Four tabs: Live Overview, Live Sites, Fleet Directory, Site Map
+- **`src/components/overview/`** — the Live Overview tab, one file per piece:
+  - `OverviewTab.tsx` composes hero, stat cards, `MainChart` (with view/overlay toggles; `OVERLAYS` lists the toggle buttons), overlay panels and `BottomRow`
+  - One panel per overlay (`PricesPanel`, `CarbonPanel`, `BmPricesPanel`, `SystemPricePanel`, `PnlPanel`, `RenewablesPanel`). **Each panel fetches its own data** with `useOverlayData(url, enabled, refreshKey)`, refetching when `refreshKey` (the main data's `lastUpdated`) changes, so panels load when opened and refresh with the 5-minute cycle
+  - `ui.tsx` — shared primitives (`Panel`, `TooltipBox`, `TooltipRow`, `Legend`, `ToggleButton`, `KeyValueList`, `AXIS_TICK`…); `helpers.ts` — pure, unit-tested logic (colours, hero caption, summaries, yesterday merge, P&L helpers)
+  - **To add an overlay:** create a panel file using `Panel` + `useOverlayData`, add its key/label to `OVERLAYS` in `MainChart.tsx`, and render it in `OverviewTab.tsx`. Do not add state or fetchers to `Dashboard.tsx`
 - **`src/components/SitesTab.tsx`** — client component; per-site live leaderboard (~105 sites, ~145 BMUs reporting PN on a typical day; "BM" tag = SO acceptance in force) ranked by |currentMW|, pulls from `/api/sites`
 - **`src/components/UnitsTab.tsx`** — client component; fleet directory with search/sort/filter, pulls from `/api/units`
 - **`src/components/UKMap.tsx`** — client component; loaded via `dynamic(..., { ssr: false })` because `react-simple-maps` uses `d3-geo` (ESM-only, breaks SSR)
@@ -136,7 +141,9 @@ CSS custom properties defined in `src/app/globals.css`:
 --radius: 12px, --radius-lg: 16px
 ```
 
-Components use inline `style` objects rather than CSS modules or Tailwind.
+Components use inline `style` objects rather than CSS modules or Tailwind. Reuse the primitives in `src/components/overview/ui.tsx` rather than copying card/tooltip/button styles.
+
+**Cognitive complexity:** keep every function under 15 (Sonar rule S3776, default threshold). As of 2026-10-07 nothing in `src/` exceeds 14. Prefer lookup tables over long `if/else` chains (see `MOCK_PROFILE` in `elexon.ts`) and extract pure helpers.
 
 ## Shipped Enhancements
 
@@ -149,7 +156,7 @@ These were not in the original build but have since been added:
 - **Yesterday overlay** (`/api/elexon/history`, Dashboard) — dashed reference line on the main chart showing the same metric from the previous day. Fetched lazily on first toggle.
 - **BM bid/offer prices overlay** (`/api/bm-prices`, `src/lib/bm-prices.ts`) — fleet-average *submitted* (not accepted) bid/offer prices per SP from Elexon BOD/stream. Offer (amber) = discharge price £/MWh; Bid (blue) = charge price. Toggle in main chart header.
 - **Settlement period P&L estimate** (`src/lib/pnl.ts`) — estimated gross revenue per SP: `avgMW × price / 2000` (£k). Basis switch in the panel: Market Index Price (`/api/market-price`, default) or System price (`/api/system-prices`). Bar chart with running daily total. Toggle in main chart header.
-- **System price overlay** (`/api/system-prices`, `src/lib/system-prices.ts`, `src/components/SystemPricePanel.tsx`) — SSP line (pink) with dashed Market Index Price for comparison, NIV bars on a right axis (red = system short, blue = long). Toggle "⚖️ System Price". Initial settlement values, published ~20 min after each SP.
+- **System price overlay** (`/api/system-prices`, `src/lib/system-prices.ts`, `src/components/overview/SystemPricePanel.tsx`) — SSP line (pink) with dashed Market Index Price for comparison, NIV bars on a right axis (red = system short, blue = long). Toggle "⚖️ System Price". Initial settlement values, published ~20 min after each SP.
 - **Wind & solar overlay** (`StorageDataPoint.wind/solar`) — FUELINST WIND and SOLAR fields threaded through the data pipeline. Teal (wind) and yellow (solar) lines in a separate panel. Toggle in main chart header.
 
 ## Possible Enhancements

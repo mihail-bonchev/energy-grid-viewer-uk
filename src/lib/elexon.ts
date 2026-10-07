@@ -45,67 +45,53 @@ export interface ApiResponse {
 
 // ─── Mock data generator ─────────────────────────────────────────────────────
 
+// Realistic UK BESS / pumped-hydro daily shape: from `startHour` until the next
+// row, MW levels are battery ± 100 and pumped ± 100 × pumpedNoise.
+const MOCK_PROFILE: Array<{ startHour: number; battery: number; pumped: number; pumpedNoise: number }> = [
+  { startHour: 0,  battery: -900, pumped: -400, pumpedNoise: 0.5 }, // cheap overnight charging
+  { startHour: 3,  battery: -600, pumped: -200, pumpedNoise: 0.5 },
+  { startHour: 6,  battery: 600,  pumped: 800,  pumpedNoise: 1 },   // morning peak discharge
+  { startHour: 9,  battery: -300, pumped: 100,  pumpedNoise: 0.5 }, // charging as solar ramps up
+  { startHour: 12, battery: -700, pumped: -300, pumpedNoise: 0.5 }, // peak solar, heavy charging
+  { startHour: 15, battery: 400,  pumped: 600,  pumpedNoise: 1 },
+  { startHour: 17, battery: 1400, pumped: 1200, pumpedNoise: 1 },   // evening peak — max discharge
+  { startHour: 21, battery: 200,  pumped: 0,    pumpedNoise: 0.3 },
+  { startHour: 23, battery: -500, pumped: -300, pumpedNoise: 0.5 },
+];
+
+function mockProfileAt(hour: number) {
+  return [...MOCK_PROFILE].reverse().find((p) => hour >= p.startHour) ?? MOCK_PROFILE[0];
+}
+
+// Solar: bell curve peaking ~13:00, zero outside 06:00–20:00.
+function mockSolar(hour: number): number {
+  if (hour < 6 || hour >= 20) return 0;
+  return Math.max(0, Math.round(8000 * Math.exp(-0.5 * Math.pow((hour - 13) / 3.5, 2)) + (Math.random() - 0.5) * 600));
+}
+
+// Wind: variable base ~8 GW with slow sinusoidal drift.
+function mockWind(hour: number): number {
+  return Math.round(Math.max(500, 8000 + 3500 * Math.sin(hour * 0.4) + (Math.random() - 0.5) * 2000));
+}
+
 export function generateMockData(hours = 24): StorageDataPoint[] {
-  const now = new Date();
+  const now = Date.now();
+  const noise = () => (Math.random() - 0.5) * 200;
   const points: StorageDataPoint[] = [];
-  const totalPoints = hours * 12; // 5-min intervals
 
-  for (let i = totalPoints - 1; i >= 0; i--) {
-    const t = new Date(now.getTime() - i * 5 * 60 * 1000);
+  for (let i = hours * 12 - 1; i >= 0; i--) { // 5-min intervals
+    const t = new Date(now - i * 5 * 60 * 1000);
     const hour = t.getHours() + t.getMinutes() / 60;
-    const noise = () => (Math.random() - 0.5) * 200;
-
-    // Realistic UK BESS pattern
-    let battery: number;
-    let pumped: number;
-
-    if (hour >= 0 && hour < 3) {
-      battery = -900 + noise();   // cheap overnight charging
-      pumped = -400 + noise() * 0.5;
-    } else if (hour >= 3 && hour < 6) {
-      battery = -600 + noise();
-      pumped = -200 + noise() * 0.5;
-    } else if (hour >= 6 && hour < 9) {
-      battery = 600 + noise();    // morning peak discharge
-      pumped = 800 + noise();
-    } else if (hour >= 9 && hour < 12) {
-      battery = -300 + noise();   // charging as solar ramps up
-      pumped = 100 + noise() * 0.5;
-    } else if (hour >= 12 && hour < 15) {
-      battery = -700 + noise();   // peak solar, heavy charging
-      pumped = -300 + noise() * 0.5;
-    } else if (hour >= 15 && hour < 17) {
-      battery = 400 + noise();
-      pumped = 600 + noise();
-    } else if (hour >= 17 && hour < 21) {
-      battery = 1400 + noise();   // evening peak — max discharge
-      pumped = 1200 + noise();
-    } else if (hour >= 21 && hour < 23) {
-      battery = 200 + noise();
-      pumped = 0 + noise() * 0.3;
-    } else {
-      battery = -500 + noise();
-      pumped = -300 + noise() * 0.5;
-    }
-
-    // Solar: bell curve peaking ~13:00; zero at night
-    let solar = 0;
-    if (hour >= 6 && hour < 20) {
-      solar = Math.round(8000 * Math.exp(-0.5 * Math.pow((hour - 13) / 3.5, 2)) + (Math.random() - 0.5) * 600);
-      solar = Math.max(0, solar);
-    }
-    // Wind: variable base ~8 GW with slow sinusoidal drift
-    const wind = Math.round(Math.max(500, 8000 + 3500 * Math.sin(hour * 0.4) + (Math.random() - 0.5) * 2000));
-
-    const bRounded = Math.round(battery);
-    const pRounded = Math.round(pumped);
+    const profile = mockProfileAt(hour);
+    const battery = Math.round(profile.battery + noise());
+    const pumped = Math.round(profile.pumped + noise() * profile.pumpedNoise);
     points.push({
       time: t.toISOString(),
-      battery: bRounded,
-      pumped: pRounded,
-      total: bRounded + pRounded,
-      wind,
-      solar,
+      battery,
+      pumped,
+      total: battery + pumped,
+      wind: mockWind(hour),
+      solar: mockSolar(hour),
     });
   }
   return points;
