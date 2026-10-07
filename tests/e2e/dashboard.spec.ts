@@ -7,8 +7,9 @@ test.describe("Dashboard — core load", () => {
 
   test("page title and header render", async ({ page }) => {
     await expect(page).toHaveTitle(/GB Grid/i);
-    await expect(page.getByText("GB Grid Battery Storage")).toBeVisible();
-    await expect(page.getByText("Elexon Insights API")).toBeVisible();
+    // exact: the footer also contains "GB Grid Battery Storage Dashboard …"
+    await expect(page.getByText("GB Grid Battery Storage", { exact: true })).toBeVisible();
+    await expect(page.getByText("Transmission-Level BESS · Elexon Insights API")).toBeVisible();
   });
 
   test("displays a live battery output reading", async ({ page }) => {

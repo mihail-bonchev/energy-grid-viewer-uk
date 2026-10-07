@@ -26,10 +26,10 @@ test.describe("Tab navigation", () => {
       await expect(page.getByText(/MW/).first()).toBeVisible({ timeout: 15_000 });
     });
 
-    test("has active/all toggle", async ({ page }) => {
+    test("has show-idle toggle", async ({ page }) => {
       await page.getByRole("button", { name: /Live Sites/ }).click();
       await expect(
-        page.getByRole("button", { name: /Active Only|Show All/i })
+        page.getByRole("button", { name: /Show idle|Hiding idle/i })
       ).toBeVisible({ timeout: 10_000 });
     });
   });
@@ -54,9 +54,8 @@ test.describe("Tab navigation", () => {
 
     test("has colour mode toggle", async ({ page }) => {
       await page.getByRole("button", { name: /Site Map/ }).click();
-      await expect(
-        page.getByRole("button", { name: /capacity|operator/i })
-      ).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByRole("button", { name: /By capacity/i })).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByRole("button", { name: /By operator/i })).toBeVisible();
     });
   });
 
